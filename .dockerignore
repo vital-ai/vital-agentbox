@@ -19,7 +19,8 @@ docs/
 examples/
 daytona/
 logs/
-scripts/
+scripts/*
+!scripts/download_pyodide.sh
 .env
 .env.*
 .DS_Store
