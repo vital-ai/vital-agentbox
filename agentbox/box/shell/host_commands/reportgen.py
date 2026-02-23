@@ -211,8 +211,39 @@ async def _resolve_glob(pattern, env, memfs):
     return sorted(matched)
 
 
+_HELP_TEXT = """\
+reportgen — generate PDF from Markdown
+
+Usage:
+  reportgen INPUT [INPUT...] -o OUTPUT.pdf [OPTIONS]
+
+Required:
+  INPUT             One or more .md files (globs supported)
+  -o, --output      Output PDF path (must end in .pdf)
+
+Options:
+  --title TITLE     Document title
+  --author AUTHOR   Document author
+  --date DATE       Document date
+  --toc             Include table of contents
+  --toc-depth N     TOC depth (1-6, default 3)
+  --template FILE   Custom LaTeX template
+  --highlight-style STYLE  Code highlight style (pygments, tango, etc.)
+  --margin SIZE     Page margin (e.g. 1in, 2cm)
+
+Examples:
+  reportgen /workspace/report.md -o /workspace/report.pdf
+  reportgen /workspace/report.md -o /workspace/report.pdf --title 'My Report' --author 'Agent' --toc
+  reportgen /workspace/chapters/*.md -o /workspace/book.pdf --toc --toc-depth 2
+"""
+
+
 async def host_reportgen(args, stdin, env, memfs):
     """Execute reportgen: validate args, scan files, run pandoc, return PDF."""
+
+    # Handle --help / -h
+    if not args or "--help" in args or "-h" in args:
+        return ShellResult(exit_code=0, stdout=_HELP_TEXT)
 
     # 1. Parse and validate arguments
     input_patterns, options, error = _parse_args(args)

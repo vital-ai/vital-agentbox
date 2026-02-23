@@ -227,6 +227,43 @@ class LnExec(BuiltinExec):
         return self.fail("ln: links are not supported in the sandbox filesystem.\nUse cp to create a copy instead.\n")
 
 
+class FileExec(BuiltinExec):
+    """file — determine file type (simplified sandbox version)."""
+
+    name = "file"
+
+    async def run(self) -> ShellResult:
+        paths = [a for a in self.args if not a.startswith("-")]
+        if not paths:
+            return self.fail("file: missing operand\n")
+        from agentbox.box.shell.virtual_bin import is_virtual_bin_file
+        lines = []
+        for p in paths:
+            resolved = self.resolve(p)
+            if is_virtual_bin_file(resolved):
+                lines.append(f"{p}: ELF 64-bit executable (sandbox builtin)")
+                continue
+            st = await self.memfs.stat(resolved)
+            if st is None:
+                lines.append(f"{p}: cannot open (No such file or directory)")
+                continue
+            if st.get("type") == "dir":
+                lines.append(f"{p}: directory")
+            else:
+                content = await self.read_file(resolved)
+                if content is None:
+                    lines.append(f"{p}: empty")
+                elif content.startswith("#!/"):
+                    lines.append(f"{p}: script, ASCII text executable")
+                elif content.startswith("%PDF"):
+                    lines.append(f"{p}: PDF document")
+                elif content[:4] in ("\x89PNG", ):
+                    lines.append(f"{p}: PNG image data")
+                else:
+                    lines.append(f"{p}: ASCII text")
+        return self.ok("\n".join(lines) + "\n")
+
+
 class MktempExec(BuiltinExec):
     """Create a temporary file or directory in MemFS.
 

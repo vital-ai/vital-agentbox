@@ -106,6 +106,9 @@ messaging = Messaging()
         self.shell = ShellExecutor(self.memfs)
         # Default working directory
         self.shell.env.cwd = "/workspace"
+        # Pre-set git author defaults so agents don't need to configure
+        self.shell.env.set_variable("GIT_AUTHOR_NAME", "Agent")
+        self.shell.env.set_variable("GIT_AUTHOR_EMAIL", "agent@agentbox")
         self._started = True
 
     async def stop(self):

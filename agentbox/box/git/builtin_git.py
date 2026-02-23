@@ -16,9 +16,19 @@ from agentbox.box.shell.environment import ShellResult
 _GIT_INIT_JS = """async ([dir, branch]) => {
     const git = window.git;
     const fs = window.fsAdapter;
+    const FS = window.pyodide._module.FS;
     try {
         // Ensure dir exists
-        try { window.pyodide._module.FS.mkdir(dir); } catch(e) {}
+        try { FS.mkdir(dir); } catch(e) {}
+        // Check if .git already exists (re-init is a no-op)
+        let alreadyInit = false;
+        try {
+            FS.stat(dir + '/.git');
+            alreadyInit = true;
+        } catch(e) {}
+        if (alreadyInit) {
+            return { exit_code: 0, stdout: `Reinitialized existing Git repository in ${dir}/.git/\\n` };
+        }
         await git.init({ fs, dir, defaultBranch: branch || 'main' });
         return { exit_code: 0, stdout: `Initialized empty Git repository in ${dir}/.git/\\n` };
     } catch(e) {
@@ -458,7 +468,11 @@ async def builtin_git(args, stdin, env, memfs):
         r = await memfs.page.evaluate(_GIT_INIT_JS, [dir, branch])
 
     elif subcmd == "add":
+        # Support -A, -a, --all → treat as "git add ."
+        add_all = any(a in ("-A", "-a", "--all") for a in rest)
         filepaths = [a for a in rest if not a.startswith("-")]
+        if add_all and not filepaths:
+            filepaths = ["."]
         if not filepaths:
             return ShellResult(exit_code=1, stderr="git add: nothing specified\n")
         # Resolve relative to dir, but isomorphic-git wants paths relative to repo root

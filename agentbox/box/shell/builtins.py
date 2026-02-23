@@ -27,7 +27,7 @@ from agentbox.box.shell.buildin_exec.noop_cmds import (
     ChmodExec, SleepExec, CurlExec, WgetExec, UuidgenExec, MktempExec,
     PsExec, KillExec, WhoamiExec, IdExec, HostnameExec, UnameExec,
     UptimeExec, FreeExec, LsofExec, NohupExec, JobsExec, ManExec,
-    SudoExec, ChownExec, LnExec,
+    SudoExec, ChownExec, LnExec, FileExec,
 )
 from agentbox.box.shell.buildin_exec.seq_base64 import (
     SeqExec, Base64Exec, Md5sumExec, Sha256sumExec, NlExec, RevExec,
@@ -126,4 +126,5 @@ BUILTINS = {
     "chown": ChownExec.as_builtin(),
     "chgrp": ChownExec.as_builtin(),
     "ln": LnExec.as_builtin(),
+    "file": FileExec.as_builtin(),
 }
