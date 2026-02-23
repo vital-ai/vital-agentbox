@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vital-agentbox"
-version = "0.1.0"
+version = "0.1.1"
 description = "Secure sandboxed code execution and agent toolbox"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -53,10 +53,6 @@ worker = [
     "httpx>=0.25",
     "PyJWT>=2.8",
 ]
-# Full server: worker + all optional features
-server = [
-    "vital-agentbox[worker]",
-]
 # Orchestrator: stateless router (no Chromium)
 orchestrator = [
     "fastapi>=0.104",
@@ -66,10 +62,11 @@ orchestrator = [
     "PyJWT>=2.8",
     "httpx>=0.25",
 ]
-# LangChain / LangGraph integration
+# LangChain / LangGraph / Deep Agents integration
 langchain = [
     "httpx>=0.25",
     "langchain-core>=0.2",
+    "deepagents>=0.4",
 ]
 # Development / testing
 dev = [
@@ -77,6 +74,8 @@ dev = [
     "pytest-asyncio>=0.21",
     "httpx>=0.25",
     "asgi-lifespan>=2.0",
+    "deepagents>=0.4",
+    "langchain-core>=0.2",
     "build",
     "twine",
 ]
