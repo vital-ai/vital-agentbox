@@ -1,0 +1,23 @@
+include LICENSE
+include README.md
+include pyproject.toml
+
+recursive-include agentbox *.py py.typed
+
+exclude .env
+exclude .env.*
+exclude Makefile
+exclude docker-compose.yml
+exclude Dockerfile.*
+exclude environment.yml
+
+prune daytona
+prune planning
+prune examples
+prune scripts
+prune docs
+prune test
+prune test_data
+prune logs
+prune .idea
+prune .pytest_cache

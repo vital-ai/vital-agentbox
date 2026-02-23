@@ -1,8 +1,60 @@
-.idea
-build
-dist
-*.egg-info
-**/__pycache__
-**/.DS_Store
-test/output/*
-test_data/*
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Editable installs
+*.editable-*.pth
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test output
+test/output/
+
+# Test data (generated)
+test_data/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Coverage
+.coverage
+htmlcov/
+
+# mypy / type checking
+.mypy_cache/
+.pytype/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Pyodide bundle (downloaded, not checked in)
+pyodide-bundle/
+
+.env
+.env.*
+*.pem
+*.key
+logs/
+
+daytona
+test_reportgen

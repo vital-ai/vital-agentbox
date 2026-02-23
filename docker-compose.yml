@@ -1,0 +1,114 @@
+# Mode 3: Full Orchestrator + Workers + Redis + MinIO (local testing)
+#
+# Usage:
+#   docker-compose up --build
+#   curl http://localhost:8090/health
+#   curl -X POST http://localhost:8090/sandboxes -H "Content-Type: application/json" -d '{}'
+#
+# Service ports:
+#   Orchestrator:  http://localhost:8090
+#   Worker-1:      http://localhost:8091
+#   Worker-2:      http://localhost:8092
+#   MinIO API:     http://localhost:9100
+#   MinIO Console: http://localhost:9101 (minioadmin / minioadmin)
+#   Redis:         host machine (port 6381) — must be running separately
+#                  e.g. docker run -d -p 6381:6379 redis:7-alpine
+
+services:
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+
+  # Create the default bucket on startup
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 2;
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing local/agentbox-repos;
+      echo 'Bucket agentbox-repos ready';
+      "
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    ports:
+      - "8090:8000"
+    environment:
+      # Local dev: standalone Redis, no TLS
+      AGENTBOX_REDIS_URL: "redis://host.docker.internal:6381"
+      # For AWS MemoryDB, use:
+      #   AGENTBOX_REDIS_URL: "rediss://clustercfg.my-cluster.xxxxx.memorydb.us-east-1.amazonaws.com:6379"
+      #   AGENTBOX_REDIS_CLUSTER: "true"
+      #   AGENTBOX_REDIS_USERNAME: "my-acl-user"
+      #   AGENTBOX_REDIS_PASSWORD: "my-auth-token"
+      #   AGENTBOX_REDIS_TLS_SKIP_VERIFY: "false"
+      #
+      # Keycloak JWT auth (set AGENTBOX_JWT_ENABLED=true to enforce):
+      #   AGENTBOX_JWT_ENABLED: "true"
+      #   AGENTBOX_JWT_JWKS_URI: "https://keycloak.example.com/realms/myrealm/protocol/openid-connect/certs"
+      #   AGENTBOX_JWT_ISSUER: "https://keycloak.example.com/realms/myrealm"
+      #   AGENTBOX_JWT_AUDIENCE: "agentbox"
+      #   AGENTBOX_JWT_CLIENT_ID: "agentbox"
+      #   AGENTBOX_JWT_ALGORITHM: "RS256"
+      #   AGENTBOX_JWT_ROLES_CLAIM: "realm_access.roles"
+      #   AGENTBOX_JWT_TENANT_CLAIM: "sub"
+
+  worker-1:
+    image: agentbox-worker
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    shm_size: 2g
+    ports:
+      - "8091:8000"
+    environment:
+      AGENTBOX_ORCHESTRATOR_URL: "http://orchestrator:8000"
+      AGENTBOX_WORKER_ID: "worker-1"
+      AGENTBOX_WORKER_HOST: "worker-1"
+      AGENTBOX_MAX_SANDBOXES: "50"
+      # Git storage via MinIO
+      AGENTBOX_GIT_STORE: "s3"
+      AGENTBOX_GIT_S3_BUCKET: "agentbox-repos"
+      AGENTBOX_GIT_S3_ENDPOINT: "http://minio:9000"
+      AWS_ACCESS_KEY_ID: "minioadmin"
+      AWS_SECRET_ACCESS_KEY: "minioadmin"
+    depends_on:
+      - orchestrator
+      - minio-init
+
+  worker-2:
+    image: agentbox-worker
+    shm_size: 2g
+    ports:
+      - "8092:8000"
+    environment:
+      AGENTBOX_ORCHESTRATOR_URL: "http://orchestrator:8000"
+      AGENTBOX_WORKER_ID: "worker-2"
+      AGENTBOX_WORKER_HOST: "worker-2"
+      AGENTBOX_MAX_SANDBOXES: "50"
+      # Git storage via MinIO
+      AGENTBOX_GIT_STORE: "s3"
+      AGENTBOX_GIT_S3_BUCKET: "agentbox-repos"
+      AGENTBOX_GIT_S3_ENDPOINT: "http://minio:9000"
+      AWS_ACCESS_KEY_ID: "minioadmin"
+      AWS_SECRET_ACCESS_KEY: "minioadmin"
+    depends_on:
+      - orchestrator
+      - minio-init
+
+volumes:
+  minio-data:

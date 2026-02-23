@@ -1,0 +1,90 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vital-agentbox"
+version = "0.1.0"
+description = "Secure sandboxed code execution and agent toolbox"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Marc Hadfield", email = "marc@vital.ai"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Security",
+]
+keywords = ["agent", "sandbox", "pyodide", "code-execution", "langgraph"]
+
+# Core: minimal deps shared by shell executor and patch engine
+dependencies = [
+    "tree-sitter>=0.22",
+    "tree-sitter-bash>=0.21",
+    "ast-grep-py>=0.41.0",
+]
+
+[project.optional-dependencies]
+# Lightweight client — no Playwright, no sandbox deps
+client = [
+    "httpx>=0.25",
+]
+# Worker: runs Chromium + Pyodide sandboxes
+worker = [
+    "playwright",
+    "python-magic>=0.4.27",
+    "markdown-it-py>=3.0",
+    "mdit-py-plugins>=0.4",
+    "pypandoc>=1.5",
+    "panflute>=2.3.1",
+    "matplotlib",
+    "numpy",
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "boto3>=1.28",
+    "httpx>=0.25",
+    "PyJWT>=2.8",
+]
+# Full server: worker + all optional features
+server = [
+    "vital-agentbox[worker]",
+]
+# Orchestrator: stateless router (no Chromium)
+orchestrator = [
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "redis>=5.0",
+    "boto3>=1.28",
+    "PyJWT>=2.8",
+    "httpx>=0.25",
+]
+# LangChain / LangGraph integration
+langchain = [
+    "httpx>=0.25",
+    "langchain-core>=0.2",
+]
+# Development / testing
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.25",
+    "asgi-lifespan>=2.0",
+    "build",
+    "twine",
+]
+
+[project.urls]
+Homepage = "https://github.com/vital-ai/vital-agentbox"
+Repository = "https://github.com/vital-ai/vital-agentbox"
+Issues = "https://github.com/vital-ai/vital-agentbox/issues"
+
+[tool.setuptools.packages.find]
+exclude = ["test*", "test_data*", "planning*", "examples*", "daytona*", "docs*", "scripts*"]

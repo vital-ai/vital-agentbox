@@ -1,83 +1,90 @@
+import os
 import uuid
 import asyncio
 from playwright.async_api import async_playwright
-from black import format_str, FileMode
 
 from agentbox.box.box import Box
 from agentbox.box.memfs.memfs import MemFS
+from agentbox.box.shell import ShellExecutor
+
+
+PYODIDE_VERSION = "0.29.3"
+PYODIDE_CDN = f"https://cdn.jsdelivr.net/pyodide/v{PYODIDE_VERSION}/full/pyodide.js"
+
+# Override with AGENTBOX_PYODIDE_URL env var for local bundling
+# e.g. "http://localhost:8000/static/pyodide/pyodide.js"
+PYODIDE_URL = os.environ.get("AGENTBOX_PYODIDE_URL", PYODIDE_CDN)
+
+# Default timeout for code execution (seconds)
+DEFAULT_TIMEOUT = 30
 
 
 class CodeExecutorBox(Box):
+    """Ephemeral in-memory sandbox (MemBox).
 
-    def handle_code_exec(self, code_string: str) -> str:
+    Lifecycle:
+        box = CodeExecutorBox()
+        await box.start()          # launch browser, load Pyodide
+        result = await box.run_code("print('hello')")
+        result = await box.run_shell("ls /")
+        await box.stop()           # close browser
 
-        # Remove markdown formatting if present
-        code_string = "\n".join(
-            line for line in code_string.splitlines() if "```python" not in line and "```" not in line
-        )
+    Can also be used as an async context manager:
+        async with CodeExecutorBox() as box:
+            await box.run_code("print('hello')")
+    """
 
-        # Run the Python code using Pyodide in Playwright
-        answer_dict = asyncio.run(self.run_python_with_pyodide(code_string))
+    def __init__(self, timeout=DEFAULT_TIMEOUT, message_handler=None):
+        """
+        Args:
+            timeout: Max seconds for a single code/shell execution.
+            message_handler: Async callable for sendMessage bridge.
+                Signature: async def handler(message: dict) -> dict
+        """
+        self.timeout = timeout
+        self._message_handler = message_handler or self._default_message_handler
 
-        random_guid = uuid.uuid4()
-        answer_string = f"{answer_dict}\nCode Execution Confirmation: {random_guid}.\n"
-        return answer_string
+        # Initialized by start()
+        self._playwright = None
+        self._browser = None
+        self._page = None
+        self.memfs = None
+        self.shell = None
+        self._started = False
 
-    async def run_python_with_pyodide(self, code_string):
-        # Format the code using Black
-        try:
-            formatted_code = format_str(code_string, mode=FileMode())
-        except Exception as e:
-            return f"{type(e).__name__}: {e}\nBe sure your indentation is correct."
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
-        code_string = formatted_code
+    async def start(self):
+        """Launch browser, load Pyodide, set up MemFS + ShellExecutor."""
+        if self._started:
+            return
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(headless=True)
+        self._page = await self._browser.new_page()
 
-            memfs = MemFS(page)
+        # Expose the sendMessage bridge before loading any content
+        await self._page.expose_function("sendMessage", self._message_handler)
 
-            # --- Expose a messaging function ---
-            async def send_message(message):
-                # This function is invoked from the Pyodide context.
-                print("Host received message from Pyodide:", message)
+        # Load Pyodide — navigate to a real page first so Chromium has a
+        # proper origin and can load scripts/wasm via HTTP.
+        pyodide_base = PYODIDE_URL.rsplit("/", 1)[0]
+        await self._page.goto(f"{pyodide_base}/sandbox.html")
+        await self._page.add_script_tag(url=PYODIDE_URL)
+        await self._page.evaluate("""async () => {
+            window.pyodide = await loadPyodide();
+            await pyodide.loadPackage("micropip");
 
-                # process message, such as getting data from kgraph
-
-
-                # Build a reply dictionary.
-                response = {"reply": "Message received", "original": message}
-                return response
-
-            await page.expose_function("sendMessage", send_message)
-
-            # Load Pyodide via CDN using a data URL that injects the script
-            await page.goto(
-                'data:text/html,<script src="https://cdn.jsdelivr.net/pyodide/v0.23.0/full/pyodide.js"></script>'
-            )
-
-            # Evaluate Python code in Pyodide. Passing `code_string` as an argument avoids
-            # issues with escaping when embedding it in the JavaScript snippet.
-
-            evaluate_task = asyncio.create_task(
-                page.evaluate(
-                    """async (code) => {
-                    const pyodide = await loadPyodide();
-                    try {
-                        // Redirect stdout in Pyodide to capture output
-                        pyodide.runPython(`
-import sys
-from io import StringIO
-sys.stdout = StringIO()
-                        `);
-                        pyodide.runPython(`
+            // Set up the messaging helper in Pyodide
+            window.pyodide.runPython(`
 import json
 import js
+from io import StringIO
+
 class Messaging:
     async def send(self, message):
-        # Explicitly convert the Python dict to a JSON string,
-        # then parse it into a JS object.
         json_message = json.dumps(message)
         js_message = js.JSON.parse(json_message)
         result = await js.sendMessage(js_message)
@@ -85,30 +92,145 @@ class Messaging:
             return result.to_py()
         except AttributeError:
             return result
+
 messaging = Messaging()
-                        `);
-                        
-                        // Execute the provided code
+`);
+        }""")
+
+        self.memfs = MemFS(self._page)
+        self.shell = ShellExecutor(self.memfs)
+        self._started = True
+
+    async def stop(self):
+        """Close browser and release all resources."""
+        if not self._started:
+            return
+        try:
+            if self._browser:
+                await self._browser.close()
+            if self._playwright:
+                await self._playwright.stop()
+        finally:
+            self._playwright = None
+            self._browser = None
+            self._page = None
+            self.memfs = None
+            self.shell = None
+            self._started = False
+
+    async def __aenter__(self):
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.stop()
+        return False
+
+    # ------------------------------------------------------------------
+    # Box ABC implementation
+    # ------------------------------------------------------------------
+
+    async def run_code(self, code, language="python"):
+        """Execute code in the sandbox.
+
+        Returns:
+            dict with keys: stdout, stderr, exit_code
+        """
+        self._ensure_started()
+
+        if language != "python":
+            return {"stdout": "", "stderr": f"Unsupported language: {language}", "exit_code": 1}
+
+        try:
+            result = await asyncio.wait_for(
+                self._page.evaluate("""async (code) => {
+                    const pyodide = window.pyodide;
+                    try {
+                        pyodide.runPython(`
+import sys
+from io import StringIO
+sys.stdout = StringIO()
+sys.stderr = StringIO()
+`);
                         await pyodide.runPythonAsync(code);
-                        // Retrieve captured stdout output
-                        const std_output = pyodide.runPython("sys.stdout.getvalue()");
-                        return { success: true, output: std_output };
+                        const stdout = pyodide.runPython("sys.stdout.getvalue()");
+                        const stderr = pyodide.runPython("sys.stderr.getvalue()");
+                        pyodide.runPython("sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__");
+                        return { stdout, stderr, exit_code: 0 };
                     } catch (error) {
-                        return { success: false, error: `${error.name}: ${error.message}` };
+                        let stderr = "";
+                        try { stderr = pyodide.runPython("sys.stderr.getvalue()"); } catch(e) {}
+                        try { pyodide.runPython("sys.stdout = sys.__stdout__; sys.stderr = sys.__stderr__"); } catch(e) {}
+                        return { stdout: "", stderr: (stderr || "") + error.message + "\\n", exit_code: 1 };
                     }
-                    }""",
-                    code_string
-                )
+                }""", code),
+                timeout=self.timeout
             )
+        except asyncio.TimeoutError:
+            result = {"stdout": "", "stderr": "TimeoutError: execution exceeded timeout\n", "exit_code": 124}
 
+        return result
+
+    async def run_shell(self, command):
+        """Execute a shell command via the tree-sitter-bash ShellExecutor.
+
+        Returns:
+            dict with keys: stdout, stderr, exit_code
+        """
+        self._ensure_started()
+        r = await self.shell.run(command)
+        return {"stdout": r.stdout, "stderr": r.stderr, "exit_code": r.exit_code}
+
+    async def read_file(self, path):
+        """Read a file from the sandbox MemFS."""
+        self._ensure_started()
+        return await self.memfs.read_file(path)
+
+    async def write_file(self, path, content):
+        """Write a file to the sandbox MemFS."""
+        self._ensure_started()
+        return await self.memfs.write_file(path, content)
+
+    # ------------------------------------------------------------------
+    # Backward-compatible API
+    # ------------------------------------------------------------------
+
+    def handle_code_exec(self, code_string):
+        """Synchronous wrapper for code execution (legacy API).
+
+        Creates a temporary sandbox if not already started.
+        """
+        code_string = "\n".join(
+            line for line in code_string.splitlines()
+            if "```python" not in line and "```" not in line
+        )
+
+        async def _run():
+            auto_started = not self._started
+            if auto_started:
+                await self.start()
             try:
-                result = await asyncio.wait_for(evaluate_task, timeout=30)
-            except asyncio.TimeoutError:
-                evaluate_task.cancel()  # Cancel the task if it exceeds the timeout.
-                result = {
-                    "success": False,
-                    "error": "TimeoutError: Pyodide code execution exceeded 30 seconds."
-                }
+                result = await self.run_code(code_string)
+                return {"success": result["exit_code"] == 0,
+                        "output": result["stdout"],
+                        "error": result["stderr"]}
+            finally:
+                if auto_started:
+                    await self.stop()
 
-            await browser.close()
-            return result
+        answer_dict = asyncio.run(_run())
+        random_guid = uuid.uuid4()
+        return f"{answer_dict}\nCode Execution Confirmation: {random_guid}.\n"
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _ensure_started(self):
+        if not self._started:
+            raise RuntimeError("Box not started. Call await box.start() first.")
+
+    @staticmethod
+    async def _default_message_handler(message):
+        """Default sendMessage handler — echo back."""
+        return {"reply": "Message received", "original": message}

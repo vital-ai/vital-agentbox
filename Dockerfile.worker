@@ -1,0 +1,38 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# 1. System deps for Chromium + build tools
+RUN apt-get update && apt-get install -y \
+    gcc g++ libmagic1 \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+    libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 \
+    libgbm1 libpango-1.0-0 libasound2 libxshmfence1 libxfixes3 \
+    curl bzip2 \
+    pandoc texlive-latex-recommended texlive-fonts-recommended \
+    texlive-latex-extra latexmk lmodern \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Heavy deps: Playwright + Chromium + Pyodide bundle (rarely changes)
+RUN pip install --no-cache-dir playwright \
+    && python -m playwright install chromium
+
+COPY scripts/download_pyodide.sh scripts/
+RUN bash scripts/download_pyodide.sh 0.29.3 \
+    && echo '<html><body></body></html>' > pyodide-bundle/sandbox.html
+
+# 3. Python package deps (changes when pyproject.toml changes)
+COPY pyproject.toml README.md ./
+RUN mkdir -p agentbox && touch agentbox/__init__.py \
+    && pip install --no-cache-dir ".[worker]"
+
+# 4. Application source (changes every commit — fast layer)
+COPY agentbox/ agentbox/
+RUN pip install --no-cache-dir --no-deps .
+
+ENV AGENTBOX_PYODIDE_URL="http://localhost:8000/static/pyodide/pyodide.js"
+ENV AGENTBOX_PYODIDE_BUNDLE="/app/pyodide-bundle"
+
+EXPOSE 8000
+
+CMD ["uvicorn", "agentbox.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

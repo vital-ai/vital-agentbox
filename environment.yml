@@ -1,0 +1,11 @@
+name: vital-agentbox
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - matplotlib
+  - pip:
+      - -e ".[dev,server]"

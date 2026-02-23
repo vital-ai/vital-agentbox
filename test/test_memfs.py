@@ -12,7 +12,7 @@ async def main():
         page = await browser.new_page()
 
         # Load Pyodide via CDN; ensure it's attached to window.pyodide
-        await page.goto('data:text/html,<script src="https://cdn.jsdelivr.net/pyodide/v0.23.0/full/pyodide.js"></script>')
+        await page.goto('data:text/html,<script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>')
         await page.evaluate('''async () => {
             window.pyodide = await loadPyodide();
         }''')

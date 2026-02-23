@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install deps first (cached layer) using stub package
+COPY pyproject.toml README.md ./
+RUN mkdir -p agentbox && touch agentbox/__init__.py \
+    && pip install --no-cache-dir ".[orchestrator]"
+
+# Copy real source and reinstall (no-deps, fast)
+COPY agentbox/ agentbox/
+RUN pip install --no-cache-dir --no-deps .
+
+EXPOSE 8000
+CMD ["uvicorn", "agentbox.orchestrator.app:app", "--host", "0.0.0.0", "--port", "8000"]
