@@ -98,7 +98,14 @@ messaging = Messaging()
         }""")
 
         self.memfs = MemFS(self._page)
+
+        # Pre-create standard directories agents expect
+        for d in ("/workspace", "/data", "/var", "/etc"):
+            await self.memfs.mkdir_p(d)
+
         self.shell = ShellExecutor(self.memfs)
+        # Default working directory
+        self.shell.env.cwd = "/workspace"
         self._started = True
 
     async def stop(self):

@@ -20,6 +20,8 @@ from agentbox.box.shell.host_commands.git_sync import (
 )
 from agentbox.box.shell.host_commands.boxcp import host_boxcp
 from agentbox.box.shell.host_commands.outline_cmd import host_outline
+from agentbox.box.shell.host_commands.tar_zip import host_tar, host_zip, host_unzip
+from agentbox.box.shell.host_commands.awk_cmd import host_awk
 
 
 HOST_COMMANDS = {
@@ -30,4 +32,9 @@ HOST_COMMANDS = {
     "git-pull": host_git_pull,
     "git-fetch": host_git_fetch,
     "git-clone": host_git_clone,
+    "tar": host_tar,
+    "zip": host_zip,
+    "unzip": host_unzip,
+    "awk": host_awk,
+    "gawk": host_awk,
 }

@@ -39,7 +39,7 @@ class LsExec(BuiltinExec):
     async def run(self) -> ShellResult:
         recursive = False
         show_info = False
-        path = None
+        paths = []
 
         for arg in self.args:
             if arg == "-r" or arg == "-R":
@@ -50,41 +50,57 @@ class LsExec(BuiltinExec):
                 show_info = True
                 recursive = True
             elif not arg.startswith("-"):
-                path = arg
+                paths.append(arg)
 
-        resolved = self.resolve(path) if path else self.env.cwd
+        if not paths:
+            paths = [None]  # default: cwd
 
-        # Virtual /bin directory
-        from agentbox.box.shell.virtual_bin import is_virtual_bin_dir, virtual_bin_list
-        if is_virtual_bin_dir(resolved):
-            result = virtual_bin_list(info=show_info)
-        else:
-            result = await self.memfs.list_dir(resolved, recursive=recursive, info=show_info)
+        all_lines = []
+        multi = len(paths) > 1
+        errors = []
 
-        if isinstance(result, str) and result.startswith("Error"):
-            # Might be a file path, not a directory — try stat
-            st = await self.memfs.stat(resolved)
-            if st and st.get("type") == "file":
-                if show_info:
-                    return self.ok(f"file\t{st.get('size', 0)}\t{path or resolved}\n")
-                return self.ok(f"{path or resolved}\n")
-            return ShellResult(exit_code=1, stderr=f"ls: {result}")
+        for path in paths:
+            resolved = self.resolve(path) if path else self.env.cwd
+            display = path or resolved
 
-        if show_info and isinstance(result, list):
-            lines = []
-            for item in result:
-                if isinstance(item, dict):
-                    t = item.get("type", "?")
-                    s = item.get("size", "-")
-                    n = item.get("name", "?")
-                    lines.append(f"{t}\t{s}\t{n}")
-                else:
-                    lines.append(str(item))
-            return ShellResult(stdout="\n".join(lines) + "\n" if lines else "")
+            # Virtual /bin directory
+            from agentbox.box.shell.virtual_bin import is_virtual_bin_dir, virtual_bin_list
+            if is_virtual_bin_dir(resolved):
+                result = virtual_bin_list(info=show_info)
+            else:
+                result = await self.memfs.list_dir(resolved, recursive=recursive, info=show_info)
 
-        if isinstance(result, list):
-            return ShellResult(stdout="\n".join(str(x) for x in result) + "\n" if result else "")
-        elif isinstance(result, dict):
-            lines = _format_recursive(result, "")
-            return ShellResult(stdout="\n".join(lines) + "\n" if lines else "")
-        return ShellResult(stdout=str(result) + "\n")
+            if isinstance(result, str) and result.startswith("Error"):
+                # Might be a file path, not a directory — try stat
+                st = await self.memfs.stat(resolved)
+                if st and st.get("type") == "file":
+                    if show_info:
+                        all_lines.append(f"file\t{st.get('size', 0)}\t{display}")
+                    else:
+                        all_lines.append(display)
+                    continue
+                errors.append(f"ls: cannot access '{display}': No such file or directory\n")
+                continue
+
+            if multi:
+                all_lines.append(f"{display}:")
+
+            if show_info and isinstance(result, list):
+                for item in result:
+                    if isinstance(item, dict):
+                        t = item.get("type", "?")
+                        s = item.get("size", "-")
+                        n = item.get("name", "?")
+                        all_lines.append(f"{t}\t{s}\t{n}")
+                    else:
+                        all_lines.append(str(item))
+            elif isinstance(result, list):
+                for x in result:
+                    all_lines.append(str(x))
+            elif isinstance(result, dict):
+                all_lines.extend(_format_recursive(result, ""))
+
+        stdout = "\n".join(all_lines) + "\n" if all_lines else ""
+        stderr = "".join(errors)
+        exit_code = 1 if (errors and not all_lines) else 0
+        return ShellResult(exit_code=exit_code, stdout=stdout, stderr=stderr)

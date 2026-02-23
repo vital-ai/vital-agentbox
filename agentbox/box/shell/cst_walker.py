@@ -6,6 +6,8 @@ variable assignment, variable expansion, command substitution,
 quoting (single, double, ANSI-C).
 """
 
+import fnmatch as _fnmatch
+
 from agentbox.box.shell.environment import ShellResult
 from agentbox.box.shell.builtins import BUILTINS
 from agentbox.box.shell.host_commands import HOST_COMMANDS
@@ -38,13 +40,24 @@ class CSTWalker:
     # --- Top-level ---
 
     async def _visit_program(self, node, stdin):
-        """Root node — execute statements sequentially."""
-        result = ShellResult()
+        """Root node — execute statements sequentially, accumulating output."""
+        all_stdout = []
+        all_stderr = []
+        exit_code = 0
         for child in node.children:
             if child.is_named:
                 result = await self.walk(child, stdin)
                 self.env.last_exit_code = result.exit_code
-        return result
+                exit_code = result.exit_code
+                if result.stdout:
+                    all_stdout.append(result.stdout)
+                if result.stderr:
+                    all_stderr.append(result.stderr)
+        return ShellResult(
+            exit_code=exit_code,
+            stdout="".join(all_stdout),
+            stderr="".join(all_stderr),
+        )
 
     # --- Commands ---
 
@@ -57,7 +70,7 @@ class CSTWalker:
 
         cmd_name = self._get_text(name_node)
 
-        # Collect arguments
+        # Collect arguments (with glob expansion for unquoted words)
         args = []
         for child in node.children:
             if child == name_node:
@@ -67,7 +80,13 @@ class CSTWalker:
                               "concatenation", "string_content",
                               "command_substitution", "number"):
                 arg = await self._resolve_value(child)
-                args.append(arg)
+                # Glob expansion: only for unquoted words (not string/raw_string)
+                if child.type in ("word", "concatenation") and \
+                        any(c in arg for c in ("*", "?", "[")):
+                    expanded = await self._expand_glob(arg)
+                    args.extend(expanded)
+                else:
+                    args.append(arg)
 
         # Check for variable assignment prefix (e.g., FOO=bar cmd)
         # Handle it as part of the environment
@@ -459,6 +478,71 @@ class CSTWalker:
 
         else:
             return self._get_text(node)
+
+    # --- Glob Expansion ---
+
+    async def _expand_glob(self, pattern):
+        """Expand a glob pattern against MemFS.
+
+        Returns a sorted list of matching paths, or ``[pattern]`` if no
+        matches (bash default behaviour with failglob off).
+        """
+        is_abs = pattern.startswith("/")
+        if is_abs:
+            abs_pattern = pattern
+        else:
+            cwd = self.env.cwd
+            abs_pattern = (cwd + "/" + pattern) if cwd != "/" else ("/" + pattern)
+        # Normalise double slashes
+        while "//" in abs_pattern:
+            abs_pattern = abs_pattern.replace("//", "/")
+
+        segments = [s for s in abs_pattern.split("/") if s]
+        matches = await self._glob_match("", segments)
+
+        if not matches:
+            return [pattern]
+
+        matches.sort()
+
+        if not is_abs:
+            # Convert back to relative paths
+            cwd = self.env.cwd
+            prefix = cwd if cwd.endswith("/") else cwd + "/"
+            matches = [m[len(prefix):] if m.startswith(prefix) else m
+                       for m in matches]
+        return matches
+
+    async def _glob_match(self, base, segments):
+        """Recursively walk *segments*, expanding globs at each level."""
+        if not segments:
+            return [base] if base else ["/"]
+
+        seg = segments[0]
+        rest = segments[1:]
+
+        if any(c in seg for c in ("*", "?", "[")):
+            parent = base or "/"
+            entries = await self.memfs.list_dir(parent)
+            if not entries or isinstance(entries, str):
+                return []
+            names = list(entries.keys()) if isinstance(entries, dict) else list(entries)
+            results = []
+            for name in names:
+                if _fnmatch.fnmatch(name, seg):
+                    full = f"{base}/{name}"
+                    if rest:
+                        results.extend(await self._glob_match(full, rest))
+                    else:
+                        results.append(full)
+            return results
+        else:
+            full = f"{base}/{seg}"
+            if rest:
+                return await self._glob_match(full, rest)
+            else:
+                exists = await self.memfs.exists(full)
+                return [full] if exists else []
 
     # --- Helpers ---
 

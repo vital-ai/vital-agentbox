@@ -17,6 +17,22 @@ from agentbox.box.shell.buildin_exec.env_cmds import (
     CdExec, PwdExec, ExportExec, EnvExec,
 )
 from agentbox.box.shell.buildin_exec.misc import TeeExec, TrueExec, FalseExec
+from agentbox.box.shell.buildin_exec.date import DateExec
+from agentbox.box.shell.buildin_exec.sort_uniq import SortExec, UniqExec
+from agentbox.box.shell.buildin_exec.cut_tr import CutExec, TrExec
+from agentbox.box.shell.buildin_exec.diff_cmd import DiffExec
+from agentbox.box.shell.buildin_exec.path_cmds import BasenameExec, DirnameExec, RealpathExec
+from agentbox.box.shell.buildin_exec.xargs import XargsExec
+from agentbox.box.shell.buildin_exec.noop_cmds import (
+    ChmodExec, SleepExec, CurlExec, WgetExec, UuidgenExec, MktempExec,
+    PsExec, KillExec, WhoamiExec, IdExec, HostnameExec, UnameExec,
+    UptimeExec, FreeExec, LsofExec, NohupExec, JobsExec, ManExec,
+    SudoExec, ChownExec, LnExec,
+)
+from agentbox.box.shell.buildin_exec.seq_base64 import (
+    SeqExec, Base64Exec, Md5sumExec, Sha256sumExec, NlExec, RevExec,
+)
+from agentbox.box.shell.buildin_exec.disk_cmds import DuExec, DfExec
 from agentbox.box.shell.buildin_exec.head_tail import HeadExec, TailExec
 from agentbox.box.shell.buildin_exec.wc import WcExec
 from agentbox.box.shell.buildin_exec.grep import GrepExec
@@ -67,4 +83,47 @@ BUILTINS = {
     "[": TestExec.as_builtin(),
     "edit": EditExec.as_builtin(),
     "apply_patch": ApplyPatchExec.as_builtin(),
+    "date": DateExec.as_builtin(),
+    "sort": SortExec.as_builtin(),
+    "uniq": UniqExec.as_builtin(),
+    "cut": CutExec.as_builtin(),
+    "tr": TrExec.as_builtin(),
+    "diff": DiffExec.as_builtin(),
+    "basename": BasenameExec.as_builtin(),
+    "dirname": DirnameExec.as_builtin(),
+    "realpath": RealpathExec.as_builtin(),
+    "xargs": XargsExec.as_builtin(),
+    "chmod": ChmodExec.as_builtin(),
+    "sleep": SleepExec.as_builtin(),
+    "curl": CurlExec.as_builtin(),
+    "wget": WgetExec.as_builtin(),
+    "seq": SeqExec.as_builtin(),
+    "base64": Base64Exec.as_builtin(),
+    "md5sum": Md5sumExec.as_builtin(),
+    "sha256sum": Sha256sumExec.as_builtin(),
+    "nl": NlExec.as_builtin(),
+    "rev": RevExec.as_builtin(),
+    "du": DuExec.as_builtin(),
+    "df": DfExec.as_builtin(),
+    "uuidgen": UuidgenExec.as_builtin(),
+    "mktemp": MktempExec.as_builtin(),
+    "ps": PsExec.as_builtin(),
+    "kill": KillExec.as_builtin(),
+    "whoami": WhoamiExec.as_builtin(),
+    "id": IdExec.as_builtin(),
+    "hostname": HostnameExec.as_builtin(),
+    "uname": UnameExec.as_builtin(),
+    "uptime": UptimeExec.as_builtin(),
+    "free": FreeExec.as_builtin(),
+    "lsof": LsofExec.as_builtin(),
+    "nohup": NohupExec.as_builtin(),
+    "jobs": JobsExec.as_builtin(),
+    "bg": JobsExec.as_builtin(),
+    "fg": JobsExec.as_builtin(),
+    "man": ManExec.as_builtin(),
+    "sudo": SudoExec.as_builtin(),
+    "su": SudoExec.as_builtin(),
+    "chown": ChownExec.as_builtin(),
+    "chgrp": ChownExec.as_builtin(),
+    "ln": LnExec.as_builtin(),
 }
