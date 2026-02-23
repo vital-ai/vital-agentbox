@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from agentbox.box.shell.buildin_exec import BuiltinExec
 from agentbox.box.shell.environment import ShellResult
 
@@ -75,7 +77,12 @@ class LsExec(BuiltinExec):
                 st = await self.memfs.stat(resolved)
                 if st and st.get("type") == "file":
                     if show_info:
-                        all_lines.append(f"file\t{st.get('size', 0)}\t{display}")
+                        s = st.get('size', 0)
+                        now = datetime.now()
+                        date_str = now.strftime("%b %d %H:%M")
+                        all_lines.append(
+                            f"-rw-r--r--  1 sandbox sandbox {s:>8} {date_str} {display}"
+                        )
                     else:
                         all_lines.append(display)
                     continue
@@ -86,12 +93,27 @@ class LsExec(BuiltinExec):
                 all_lines.append(f"{display}:")
 
             if show_info and isinstance(result, list):
+                total = sum(
+                    (item.get("size") or 0) for item in result
+                    if isinstance(item, dict)
+                )
+                all_lines.append(f"total {(total + 1023) // 1024}")
                 for item in result:
                     if isinstance(item, dict):
                         t = item.get("type", "?")
-                        s = item.get("size", "-")
+                        s = item.get("size", 0)
                         n = item.get("name", "?")
-                        all_lines.append(f"{t}\t{s}\t{n}")
+                        if t == "dir":
+                            perms = "drwxr-xr-x"
+                            s_display = str(s) if s else "4096"
+                        else:
+                            perms = "-rw-r--r--"
+                            s_display = str(s)
+                        now = datetime.now()
+                        date_str = now.strftime("%b %d %H:%M")
+                        all_lines.append(
+                            f"{perms}  1 sandbox sandbox {s_display:>8} {date_str} {n}"
+                        )
                     else:
                         all_lines.append(str(item))
             elif isinstance(result, list):
