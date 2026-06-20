@@ -78,7 +78,7 @@ async def _handle_command(message: dict) -> dict:
         return {"status": "error", "detail": "session_id required"}
 
     ws_url = ORCHESTRATOR_URL.replace("http://", "ws://").replace("https://", "wss://")
-    ws_url += f"/browsers/{session_id}/ws"
+    ws_url += f"/internal/browsers/{session_id}/ws"
 
     log.info("Browser bridge WS: %s → %s", command.get("action"), ws_url)
 

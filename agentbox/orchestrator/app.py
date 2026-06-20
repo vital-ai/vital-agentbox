@@ -126,6 +126,7 @@ app.add_middleware(JWTMiddleware, config=jwt_config)
 app.include_router(workers.router, tags=["workers"])
 app.include_router(sandboxes.router, tags=["sandboxes"])
 app.include_router(browsers.router, tags=["browsers"])
+app.include_router(browsers.router, prefix="/internal", tags=["browsers-internal"])
 app.include_router(admin.router, tags=["admin"])
 
 
