@@ -617,8 +617,13 @@ class AgentCoreBox(Box):
         service_secret = os.environ.get("AGENTBOX_SERVICE_SECRET")
 
         if orchestrator_url:
+            # Set in both shell (for subprocesses) and Python kernel (for os.environ)
             await self._engine.execute_shell(
                 f"export AGENTBOX_ORCHESTRATOR_URL='{orchestrator_url}'"
+            )
+            await self._engine.execute(
+                f"import os; os.environ['AGENTBOX_ORCHESTRATOR_URL'] = '{orchestrator_url}'",
+                language="python",
             )
 
         if not service_secret:
@@ -642,7 +647,11 @@ class AgentCoreBox(Box):
         self._token_refresh_task = asyncio.create_task(_refresh_loop())
 
     async def _refresh_token_in_vm(self, service_secret: str):
-        """Mint a fresh token and update AGENTBOX_AUTH_TOKEN inside the MicroVM."""
+        """Mint a fresh token and update AGENTBOX_AUTH_TOKEN inside the MicroVM.
+
+        Sets the token in both the shell environment (for subprocesses) and
+        the IPython kernel's os.environ (for execute_code calls).
+        """
         from agentbox.api.auth import mint_service_token
 
         token = mint_service_token(
@@ -650,8 +659,14 @@ class AgentCoreBox(Box):
             subject=f"sandbox:{self._engine.session_id}",
             ttl=self._engine._session_timeout,
         )
+        # Shell env (for bash subprocesses)
         await self._engine.execute_shell(
             f"export AGENTBOX_AUTH_TOKEN='{token}'"
+        )
+        # Python kernel env (for os.environ in execute_code)
+        await self._engine.execute(
+            f"import os; os.environ['AGENTBOX_AUTH_TOKEN'] = '{token}'",
+            language="python",
         )
 
     def _resolve_path(self, path: str) -> str:

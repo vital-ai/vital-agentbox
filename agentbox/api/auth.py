@@ -309,7 +309,11 @@ def _try_service_token(token: str, service_secret: str) -> Optional[TokenClaims]
             roles=["service"],
             raw=payload,
         )
-    except Exception:
+    except pyjwt.ExpiredSignatureError:
+        logger.debug("Service token expired")
+        return None
+    except Exception as e:
+        logger.debug("Service token decode failed: %s", e)
         return None
 
 
