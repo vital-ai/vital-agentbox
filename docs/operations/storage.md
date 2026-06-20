@@ -142,6 +142,22 @@ result = sandbox_b.execute_sync("cat file.txt", language="shell")
 `git pull` does a force checkout of the remote state. It's designed for
 sequential workflows, not concurrent editing.
 
+## AgentCore engine sync
+
+AgentCoreBox uses the same S3 storage backends but transfers files via
+`engine_sync.py` — base64 encoding through the MicroVM's shell:
+
+- **Push**: `find` → `base64 < file` → decode on host → write to S3
+- **Pull**: read from S3 → base64 encode → `echo ... | base64 -d > file`
+
+This works with any `ExecutionEngine` that implements `execute_shell()`.
+No isomorphic-git is needed — real git runs natively in the MicroVM.
+
+## Data access modes
+
+For advanced credential management (caller-provided S3 paths and STS
+credentials), see [S3 Data Access Modes](data-access.md).
+
 ## Configuration reference
 
 | Variable | Default | Description |
@@ -158,5 +174,7 @@ sequential workflows, not concurrent editing.
 ## See also
 
 - [Git operations](../sandbox/git.md) — git commands in the sandbox
+- [AgentCore engine](../sandbox/agentcore.md) — MicroVM S3 persistence
+- [S3 Data Access Modes](data-access.md) — tenant/path/credentials modes
 - [Docker](docker.md) — docker-compose with MinIO
 - [Scaling](scaling.md) — multi-worker deployment

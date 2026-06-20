@@ -55,6 +55,10 @@
         {
           "name": "AGENTBOX_JWT_AUDIENCE",
           "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/JWT_AUDIENCE"
+        },
+        {
+          "name": "AGENTBOX_SERVICE_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/SERVICE_SECRET"
         }
       ],
       "healthCheck": {

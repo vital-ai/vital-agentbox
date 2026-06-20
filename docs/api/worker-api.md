@@ -6,7 +6,7 @@
 REST API for the AgentBox worker process. Handles sandbox lifecycle,
 code execution, and file operations directly.
 
-**Version**: 0.0.3
+**Version**: 0.1.3
 
 ## execute
 
@@ -233,9 +233,14 @@ Write File
 
 Health
 
+Returns worker health status. Returns **503** if the worker has failed
+more than `AGENTBOX_HEARTBEAT_UNHEALTHY_THRESHOLD` (default 5) consecutive
+heartbeats to the orchestrator.
+
 **Responses:**
 
-- **200**: Successful Response
+- **200**: Healthy
+- **503**: Unhealthy (orchestrator unreachable)
 
 ---
 
@@ -270,6 +275,8 @@ Create Sandbox
 | `sandbox_id` | `string | null` | No | Optional ID. Auto-generated if omitted. |
 | `box_type` | `string` | No | Sandbox type: 'mem' or 'git'. (default: `mem`) |
 | `repo_id` | `string | null` | No | Repository ID for git box (enables push/pull sync). |
+| `engine` | `string | null` | No | `pyodide` (default) or `agentcore` |
+| `s3_credentials` | `object | null` | No | Caller-provided S3 credentials (Mode 3) |
 | `timeout` | `integer | null` | No | Per-execution timeout override (seconds). |
 
 **Responses:**
@@ -280,6 +287,32 @@ Create Sandbox
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `detail` | `array[ValidationError]` | No | Detail |
+
+---
+
+### `PATCH /internal/sandboxes/{sandbox_id}/credentials`
+
+Update Credentials
+
+Hot-swap S3 credentials for a running Mode 3 sandbox. Called by the
+orchestrator when the caller PATCHes fresh credentials.
+
+**Parameters:**
+
+| Name | In | Type | Required | Description |
+|------|----|------|----------|-----------|
+| `sandbox_id` | path | `string` | Yes |  |
+
+**Request body** (`application/json`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `s3_credentials` | `object` | Yes | Fresh STS credentials |
+
+**Responses:**
+
+- **200**: Successful Response
+- **404**: Sandbox not found
 
 ---
 
@@ -652,6 +685,8 @@ Metrics
 | `sandbox_id` | `string | null` | No | Optional ID. Auto-generated if omitted. |
 | `box_type` | `string` | No | Sandbox type: 'mem' or 'git'. (default: `mem`) |
 | `repo_id` | `string | null` | No | Repository ID for git box (enables push/pull sync). |
+| `engine` | `string | null` | No | `pyodide` (default) or `agentcore` |
+| `s3_credentials` | `object | null` | No | Caller-provided S3 credentials (Mode 3) |
 | `timeout` | `integer | null` | No | Per-execution timeout override (seconds). |
 
 ### ExecuteRequest

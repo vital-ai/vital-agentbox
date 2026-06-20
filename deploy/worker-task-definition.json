@@ -26,12 +26,17 @@
         { "name": "AGENTBOX_AGENTCORE_REGION", "value": "us-east-1" },
         { "name": "AGENTBOX_GIT_STORE", "value": "s3" },
         { "name": "AGENTBOX_GIT_S3_REGION", "value": "us-east-1" },
+        { "name": "AGENTBOX_AGENTCORE_INTERPRETER_ID", "value": "agentboxVpcInterpreter-lJ5tnJr1DJ" },
         { "name": "DISPLAY", "value": ":99" }
       ],
       "secrets": [
         {
           "name": "AGENTBOX_ORCHESTRATOR_URL",
           "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/ORCHESTRATOR_URL"
+        },
+        {
+          "name": "AGENTBOX_SERVICE_SECRET",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/SERVICE_SECRET"
         },
         {
           "name": "AGENTBOX_GIT_S3_BUCKET",

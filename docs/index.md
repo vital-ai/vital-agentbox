@@ -2,17 +2,19 @@
 
 Secure sandboxed code execution for AI agents.
 
-AgentBox runs Python and shell commands inside a **Chromium + Pyodide (WASM)
-sandbox** with two independent security boundaries — no host filesystem or
-network access from agent code.
+AgentBox runs Python and shell commands in isolated sandboxes. Two execution
+engines are available: **Pyodide** (WASM in Chromium — zero egress) and
+**AgentCore** (AWS Bedrock MicroVM — real bash, real pip).
 
 ## Key features
 
-- **Dual-layer isolation** — Chromium renderer sandbox + WASM linear memory
+- **Dual-layer isolation** — Chromium renderer sandbox + WASM linear memory (Pyodide)
+- **Real MicroVM execution** — AWS AgentCore with native Python, bash, pip (AgentCore)
 - **Virtual shell** — tree-sitter-bash parser with 30+ builtins against in-memory FS
-- **Python execution** — Pyodide (CPython compiled to WASM) with pip install support
-- **Git operations** — isomorphic-git on MemFS (GitBox mode) with S3/MinIO storage
+- **Browser sessions** — Playwright-backed remote browser control via WebSocket
+- **Git operations** — isomorphic-git on MemFS or real git in AgentCore, with S3 storage
 - **LLM file editing** — `edit` builtin with 5-tier fuzzy matching + AST-aware fallback
+- **S3 data access modes** — tenant-scoped, caller-path, or caller-credentials
 - **Client SDK** — async/sync Python client, LangChain tools, Deep Agents backend
 
 ## Quick start
@@ -44,11 +46,12 @@ sandbox.destroy_sync()
 
 ## Box types
 
-| Type | Description | Use case |
-|------|-------------|----------|
-| **MemBox** | Ephemeral in-memory sandbox | Default. Data analysis, code generation, testing |
-| **GitBox** | MemBox + isomorphic-git + storage | Persistent repos, commit/branch/merge, push to S3 |
-| **FileSystemBox** | Host directory (dev only) | Local development and debugging |
+| Type | Engine | Description | Use case |
+|------|--------|-------------|----------|
+| **MemBox** | Pyodide | Ephemeral in-memory sandbox | Default. Data analysis, code generation, testing |
+| **GitBox** | Pyodide | MemBox + isomorphic-git + storage | Persistent repos, commit/branch/merge, push to S3 |
+| **AgentCoreBox** | AgentCore | Real Linux MicroVM + real git | Compiled packages, real bash, large files |
+| **FileSystemBox** | Host | Host directory (dev only) | Local development and debugging |
 
 ## Architecture overview
 
@@ -56,20 +59,16 @@ sandbox.destroy_sync()
 ┌─────────────────────────────────────────────┐
 │  Orchestrator (FastAPI)                     │
 │  Auth, routing, scaling, Redis state        │
-└──────────────┬──────────────────────────────┘
-               │ HTTP proxy
-┌──────────────▼──────────────────────────────┐
-│  Worker (FastAPI + Playwright)              │
-│  ┌────────────────────────────────────────┐ │
-│  │  Chromium Sandbox (Seatbelt/seccomp)   │ │
-│  │  ┌──────────────────────────────────┐  │ │
-│  │  │  Pyodide (WASM linear memory)    │  │ │
-│  │  │  - Python execution              │  │ │
-│  │  │  - Shell builtins (MemFS)        │  │ │
-│  │  │  - isomorphic-git (GitBox)       │  │ │
-│  │  └──────────────────────────────────┘  │ │
-│  └────────────────────────────────────────┘ │
-└─────────────────────────────────────────────┘
+└───────┬────────────────────────────┬────────┘
+        │ HTTP proxy                     │
+┌───────▼──────────────────────┐  ┌────▼─────────────┐
+│  Worker (code mode)            │  │  Worker (browser)   │
+│  ┌──────────────────────────┐ │  │  SessionPool      │
+│  │ Chromium + Pyodide (WASM)  │ │  │  Playwright       │
+│  │ ─ or ─                     │ │  │  WebSocket ctrl   │
+│  │ AgentCore (MicroVM)       │ │  └──────────────────┘
+│  └──────────────────────────┘ │
+└───────────────────────────────┘
 ```
 
 ## Documentation
@@ -79,7 +78,8 @@ sandbox.destroy_sync()
   - [Quickstart](getting-started/quickstart.md)
   - [Deployment](getting-started/deployment.md)
 - **Sandbox**
-  - [Overview — MemBox vs GitBox](sandbox/overview.md)
+  - [Overview — MemBox vs GitBox vs AgentCore](sandbox/overview.md)
+  - [AgentCore engine (AWS MicroVM)](sandbox/agentcore.md)
   - [Shell execution](sandbox/shell.md)
   - [Shell builtins reference](sandbox/builtins.md)
   - [Python execution](sandbox/python.md)
@@ -96,6 +96,7 @@ sandbox.destroy_sync()
   - [Docker](operations/docker.md)
   - [Scaling](operations/scaling.md)
   - [Storage backends](operations/storage.md)
+  - [S3 data access modes](operations/data-access.md)
 - **Reference**
   - [Configuration](reference/config.md)
   - [Changelog](changelog.md)

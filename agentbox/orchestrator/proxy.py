@@ -5,10 +5,23 @@ Looks up sandbox_id → worker endpoint in Redis, then forwards the
 request using httpx.
 """
 
+import os
+
 import httpx
 from fastapi import HTTPException
 
 from agentbox.orchestrator.state import OrchestratorState
+
+_SERVICE_SECRET = os.environ.get("AGENTBOX_SERVICE_SECRET")
+
+
+def _auth_headers() -> dict:
+    """Mint a fresh short-lived service JWT for orchestrator→worker calls."""
+    if not _SERVICE_SECRET:
+        return {}
+    from agentbox.api.auth import mint_service_token
+    token = mint_service_token(_SERVICE_SECRET, subject="orchestrator", ttl=60)
+    return {"Authorization": f"Bearer {token}"}
 
 
 async def proxy_to_worker(
@@ -51,16 +64,18 @@ async def proxy_to_worker(
     if path:
         url += f"/{path}"
 
+    headers = _auth_headers()
+
     async with httpx.AsyncClient(timeout=timeout) as client:
         try:
             if method == "GET":
-                resp = await client.get(url, params=params)
+                resp = await client.get(url, params=params, headers=headers)
             elif method == "POST":
-                resp = await client.post(url, json=body)
+                resp = await client.post(url, json=body, headers=headers)
             elif method == "PATCH":
-                resp = await client.patch(url, json=body)
+                resp = await client.patch(url, json=body, headers=headers)
             elif method == "DELETE":
-                resp = await client.delete(url, params=params)
+                resp = await client.delete(url, params=params, headers=headers)
             else:
                 raise HTTPException(status_code=405, detail=f"Method {method} not supported")
         except httpx.ConnectError:

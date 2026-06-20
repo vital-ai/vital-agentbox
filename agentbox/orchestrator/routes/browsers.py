@@ -7,6 +7,7 @@ REST operations and WebSocket connections to the owning worker.
 
 import asyncio
 import logging
+import os
 
 import httpx
 from fastapi import APIRouter, Request, HTTPException, WebSocket, WebSocketDisconnect
@@ -14,6 +15,17 @@ from pydantic import BaseModel
 from typing import Optional
 
 from agentbox.orchestrator.state import OrchestratorState
+
+_SERVICE_SECRET = os.environ.get("AGENTBOX_SERVICE_SECRET")
+
+
+def _auth_headers() -> dict:
+    """Mint a fresh short-lived service JWT for orchestrator→worker calls."""
+    if not _SERVICE_SECRET:
+        return {}
+    from agentbox.api.auth import mint_service_token
+    token = mint_service_token(_SERVICE_SECRET, subject="orchestrator", ttl=60)
+    return {"Authorization": f"Bearer {token}"}
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +64,7 @@ async def create_browser_session(req: CreateBrowserSessionRequest, request: Requ
             resp = await client.post(
                 f"{worker.endpoint}/internal/browsers",
                 json=body,
+                headers=_auth_headers(),
             )
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             raise HTTPException(status_code=502, detail=f"Browser worker {worker.worker_id} unreachable: {e}")
@@ -88,7 +101,7 @@ async def list_browser_sessions(request: Request):
             continue
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{w.endpoint}/internal/browsers")
+                resp = await client.get(f"{w.endpoint}/internal/browsers", headers=_auth_headers())
             if resp.status_code == 200:
                 data = resp.json()
                 for s in data.get("sessions", []):
@@ -115,7 +128,7 @@ async def get_browser_session(session_id: str, request: Request):
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            resp = await client.get(f"{worker.endpoint}/internal/browsers/{session_id}")
+            resp = await client.get(f"{worker.endpoint}/internal/browsers/{session_id}", headers=_auth_headers())
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             raise HTTPException(status_code=502, detail=f"Worker unreachable: {e}")
 
@@ -144,7 +157,7 @@ async def delete_browser_session(session_id: str, request: Request):
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            resp = await client.delete(f"{worker.endpoint}/internal/browsers/{session_id}")
+            resp = await client.delete(f"{worker.endpoint}/internal/browsers/{session_id}", headers=_auth_headers())
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             raise HTTPException(status_code=502, detail=f"Worker unreachable: {e}")
 
@@ -186,8 +199,9 @@ async def browser_ws_proxy(ws: WebSocket, session_id: str):
 
     # Connect to worker WS
     import websockets
+    extra_headers = _auth_headers() or None
     try:
-        async with websockets.connect(worker_ws_url) as worker_ws:
+        async with websockets.connect(worker_ws_url, additional_headers=extra_headers) as worker_ws:
             # Relay frames bidirectionally
             async def client_to_worker():
                 try:

@@ -39,7 +39,8 @@ always reach the same worker. Configure the ALB health check on `/health`.
 
 ### Mode 3: Orchestrator + workers (production)
 
-Full stack with intelligent routing, auth, and auto-scaling.
+Full stack with intelligent routing, JWT auth, and auto-scaling.
+See [AWS ECS Deployment](aws-deployment.md) for production AWS setup.
 
 ```
 Client → ALB → Orchestrator(s) → Worker-1

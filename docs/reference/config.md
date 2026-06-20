@@ -21,6 +21,12 @@ All AgentBox configuration is via environment variables. No config files needed.
 | `AGENTBOX_PYODIDE_URL` | CDN URL (`cdn.jsdelivr.net/pyodide/v0.29.3/...`) | Pyodide JS URL. Override for local bundling. |
 | `AGENTBOX_PYODIDE_BUNDLE` | `<project_root>/pyodide-bundle` | Local Pyodide bundle path (Docker: `/app/pyodide-bundle`) |
 
+### Worker mode
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKER_MODE` | `code` | Capabilities: `code` (Pyodide sandboxes), `browser` (Playwright sessions), `both` |
+
 ### Worker identity and registration
 
 | Variable | Default | Description |
@@ -30,6 +36,15 @@ All AgentBox configuration is via environment variables. No config files needed.
 | `AGENTBOX_WORKER_PORT` | `8000` | Port the worker listens on |
 | `AGENTBOX_ORCHESTRATOR_URL` | — | Orchestrator URL for self-registration. If unset, worker runs standalone. |
 | `AGENTBOX_HEARTBEAT_INTERVAL` | `15` | Heartbeat interval in seconds |
+| `AGENTBOX_HEARTBEAT_UNHEALTHY_THRESHOLD` | `5` | Consecutive heartbeat failures before `/health` returns 503 |
+
+### AgentCore engine
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENTBOX_AGENTCORE_REGION` | `us-east-1` | AWS region for Bedrock AgentCore Code Interpreter |
+| `AGENTBOX_AGENTCORE_SESSION_TIMEOUT` | `1800` | Session idle timeout in seconds (30 min) |
+| `AGENTBOX_AGENTCORE_INTERPRETER_ID` | — | Custom interpreter ID. Omit for system default (`aws.codeinterpreter.v1`) |
 
 ### Git / isomorphic-git
 
@@ -49,6 +64,20 @@ All AgentBox configuration is via environment variables. No config files needed.
 | `AGENTBOX_REDIS_PASSWORD` | — | Auth token / password |
 | `AGENTBOX_REDIS_TLS_SKIP_VERIFY` | `false` | Skip TLS certificate verification |
 | `AGENTBOX_REDIS_PREFIX` | `agentbox:` | Key prefix for all Redis keys |
+
+### Data access mode
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENTBOX_DATA_ACCESS_MODE` | `tenant` | S3 path scoping: `tenant` (path = sub/repo_id), `path` (caller-provided), `path_credentials` (caller-provided path + STS creds) |
+
+### Credential expiry checker (Mode 3)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENTBOX_CREDENTIAL_CHECK_INTERVAL` | `30` | How often to scan for expiring credentials (seconds) |
+| `AGENTBOX_CREDENTIAL_EXPIRY_LEAD_TIME` | `300` | Fire webhook this many seconds before expiry (5 min) |
+| `AGENTBOX_CREDENTIAL_GRACE_PERIOD` | `60` | Begin graceful shutdown this many seconds before expiry if no refresh (1 min) |
 
 ### JWT authentication
 

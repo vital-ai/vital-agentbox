@@ -1,7 +1,7 @@
 # Sandbox Overview
 
-AgentBox provides three sandbox types, each with different isolation and
-persistence characteristics.
+AgentBox provides four sandbox types, each with different isolation,
+persistence, and capability characteristics.
 
 ## MemBox (default)
 
@@ -70,6 +70,37 @@ GitBox supports pluggable storage:
 | **MinIO** | `AGENTBOX_S3_ENDPOINT` | Self-hosted / dev |
 | **Local files** | `AGENTBOX_LOCAL_STORAGE_PATH` | Development only |
 
+## AgentCoreBox
+
+Real Linux execution via AWS Bedrock AgentCore Code Interpreter. Each sandbox
+maps to a Firecracker MicroVM with native Python, real bash, and a real ext4
+filesystem.
+
+**Create:**
+```python
+sandbox = client.create_sandbox_sync(engine="agentcore", repo_id="my-project")
+```
+
+**Best for:**
+- Tasks requiring compiled Python packages (numpy, pandas, torch)
+- Real bash scripts (systemd, apt, curl, docker)
+- Large file processing
+- Scenarios needing internet access from the sandbox
+
+**Properties:**
+- Real CPython 3.11+ (native, not WASM)
+- Real bash (not emulated)
+- Real pip install (any wheel, including native extensions)
+- Real filesystem (ext4, symlinks, permissions)
+- Internet access (outbound allowed)
+- Session persists across calls (variables, files, installed packages)
+- S3 push/pull for persistence (when `repo_id` is set)
+- Host-intercepted: `edit`, `apply_patch`, `git push/pull`
+- Cold start ~5–8s
+- Requires AWS credentials and `[agentcore]` extra
+
+See [AgentCore engine](agentcore.md) for full documentation.
+
 ## FileSystemBox
 
 Backed by a host directory. For local development only — **not for production**.
@@ -133,12 +164,14 @@ Worker Process                    Chromium Page
 
 ## Comparison
 
-| Feature | MemBox | GitBox | FileSystemBox |
-|---------|--------|--------|---------------|
-| Isolation | Chromium + WASM | Chromium + WASM | None |
-| Persistence | None | S3/MinIO/local | Host filesystem |
-| Git | No | Yes (isomorphic-git) | No |
-| Python | Pyodide (WASM) | Pyodide (WASM) | Host Python |
-| Shell | Virtual builtins | Virtual builtins | Host shell |
-| Startup | ~2s | ~3s | Instant |
-| Use case | Ephemeral tasks | Coding agents | Dev/debug |
+| Feature | MemBox | GitBox | AgentCoreBox | FileSystemBox |
+|---------|--------|--------|--------------|---------------|
+| Isolation | Chromium + WASM | Chromium + WASM | AWS MicroVM | None |
+| Persistence | None | S3/MinIO/local | S3 (optional) | Host filesystem |
+| Git | No | isomorphic-git | Real git | No |
+| Python | Pyodide (WASM) | Pyodide (WASM) | Native CPython | Host Python |
+| Shell | Virtual builtins | Virtual builtins | Real bash | Host shell |
+| pip install | micropip (pure only) | micropip (pure only) | Real pip (any) | Host pip |
+| Network | Blocked | Blocked | Internet access | Full |
+| Startup | ~2s | ~3s | ~5–8s | Instant |
+| Use case | Ephemeral tasks | Coding agents | Heavy compute | Dev/debug |

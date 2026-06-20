@@ -125,8 +125,7 @@ class BoxManager:
             message_handler: Custom sendMessage handler.
             repo_id: Repository ID for git box (enables push/pull sync).
             engine: Execution engine type — "pyodide" (default) or
-                    "agentcore" (future). Currently only "pyodide" is
-                    supported.
+                    "agentcore" (AWS Bedrock Code Interpreter).
             s3_credentials: Optional dict with caller-provided S3 credentials
                     (Mode 3: path_credentials). Keys: access_key_id,
                     secret_access_key, session_token, region, endpoint_url.

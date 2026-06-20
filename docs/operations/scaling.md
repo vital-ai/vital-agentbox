@@ -78,7 +78,17 @@ Workers self-register with the orchestrator on startup:
 | `AGENTBOX_ORCHESTRATOR_URL` | — | Orchestrator URL to register with |
 | `AGENTBOX_WORKER_ID` | auto-generated | Unique worker identifier |
 | `AGENTBOX_WORKER_HOST` | hostname | Hostname reachable by orchestrator |
+| `AGENTBOX_HEARTBEAT_INTERVAL` | `15` | Heartbeat interval (seconds) |
+| `AGENTBOX_HEARTBEAT_UNHEALTHY_THRESHOLD` | `5` | Failures before unhealthy |
 | `AGENTBOX_MAX_SANDBOXES` | `50` | Maximum concurrent sandboxes |
+
+### Health-based recovery
+
+Workers track consecutive heartbeat failures. After 5 failures (~75s), the
+`/health` endpoint returns 503, triggering ECS task replacement.
+
+If the orchestrator restarts (Redis keys expire), workers automatically
+re-register on their next heartbeat cycle. No manual intervention needed.
 
 ## Scaling strategies
 
@@ -134,6 +144,8 @@ Enable authentication to scope sandboxes by tenant:
 Tenant scoping: the orchestrator prefixes `repo_id` with the tenant's
 `sub` claim → `{tenant}/{repo_id}` in S3. This prevents cross-tenant
 data access.
+
+For advanced multi-mode access, see [S3 Data Access Modes](data-access.md).
 
 ## See also
 

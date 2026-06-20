@@ -9,8 +9,11 @@ drop-in replacement for Modal, Daytona, or Runloop sandboxes with
 
 ```bash
 pip install vital-agentbox[client]
-pip install deepagents
+pip install deepagents>=0.6.10
 ```
+
+> **Note**: `AgentBoxSandbox` requires `deepagents>=0.6.10`. The older
+> `AgentBoxBackend` class still works but emits a `DeprecationWarning`.
 
 ## Usage
 
@@ -114,8 +117,18 @@ backend = AgentBoxSandbox.create(
 
 ## Lifecycle
 
-The backend does NOT manage sandbox lifecycle — the caller is responsible
-for creating and destroying sandboxes:
+`AgentBoxSandbox` supports **lazy sandbox creation** — if no `sandbox_id` is
+provided, the sandbox is created on first `execute()` or `id` access:
+
+```python
+# Lazy creation (sandbox created on first use)
+backend = AgentBoxSandbox("http://localhost:8090")
+agent = create_deep_agent(backend=backend, ...)
+agent.invoke(...)  # sandbox auto-created here
+backend.destroy()  # cleanup
+```
+
+Or manage lifecycle explicitly:
 
 ```python
 client = AgentBoxClient("http://localhost:8090")
@@ -128,8 +141,25 @@ backend = AgentBoxSandbox("http://localhost:8090", sandbox.sandbox_id)
 backend.destroy()  # or sandbox.destroy_sync()
 ```
 
+## Migration from AgentBoxBackend
+
+The old `AgentBoxBackend` class is deprecated. To migrate:
+
+```python
+# Before (deprecated)
+from agentbox.langchain import AgentBoxBackend
+backend = AgentBoxBackend("http://localhost:8090", sandbox_id="...")
+
+# After
+from agentbox.deepagents import AgentBoxSandbox
+backend = AgentBoxSandbox("http://localhost:8090", sandbox_id="...")
+```
+
+`AgentBoxSandbox` implements the full `BaseSandbox` protocol including
+`upload_files`, `download_files`, and lazy creation.
+
 ## See also
 
 - [Client SDK](../api/client-sdk.md) — creating and managing sandboxes
 - [LangChain tools](langchain.md) — toolkit for LangChain agents
-- [Sandbox overview](../sandbox/overview.md) — MemBox vs GitBox
+- [Sandbox overview](../sandbox/overview.md) — MemBox vs GitBox vs AgentCore

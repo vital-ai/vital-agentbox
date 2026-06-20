@@ -63,6 +63,7 @@ class AgentCoreBox(Box):
         self._cwd = workspace
         self._abs_workspace = None  # Resolved during start()
         self._storage = None  # Set by start() if repo_id is configured
+        self._token_refresh_task = None  # Background token refresh for browser auth
 
     # ------------------------------------------------------------------
     # Properties
@@ -98,6 +99,12 @@ class AgentCoreBox(Box):
         ))["stdout"].strip()
         self._abs_workspace = abs_ws or None
 
+        # Inject orchestrator URL and a sandbox-scoped auth token into the
+        # MicroVM environment so the browser_client can authenticate.
+        # The token is minted from AGENTBOX_SERVICE_SECRET with TTL matching
+        # the session timeout — the service secret itself never enters the VM.
+        await self._inject_auth_env()
+
         # Restore from storage if repo exists
         if self.repo_id:
             self._storage = _get_storage()
@@ -130,6 +137,11 @@ class AgentCoreBox(Box):
         """
         if not self._started:
             return
+
+        # Cancel token refresh task
+        if self._token_refresh_task:
+            self._token_refresh_task.cancel()
+            self._token_refresh_task = None
 
         # Sync to storage before stopping
         if self.repo_id and self.auto_sync and self._storage:
@@ -591,6 +603,56 @@ class AgentCoreBox(Box):
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    async def _inject_auth_env(self):
+        """Inject auth environment into the MicroVM for browser_client.
+
+        Mints a sandbox-scoped service token and starts a background task
+        that refreshes it before expiry. The AGENTBOX_SERVICE_SECRET itself
+        never enters the VM — only the derived short-lived JWT.
+        """
+        import asyncio
+
+        orchestrator_url = os.environ.get("AGENTBOX_ORCHESTRATOR_URL")
+        service_secret = os.environ.get("AGENTBOX_SERVICE_SECRET")
+
+        if orchestrator_url:
+            await self._engine.execute_shell(
+                f"export AGENTBOX_ORCHESTRATOR_URL='{orchestrator_url}'"
+            )
+
+        if not service_secret:
+            return
+
+        # Mint initial token and inject it
+        await self._refresh_token_in_vm(service_secret)
+
+        # Start background refresh loop — refreshes at 50% of TTL
+        token_ttl = self._engine._session_timeout
+        refresh_interval = max(token_ttl // 2, 30)  # At least every 30s
+
+        async def _refresh_loop():
+            while True:
+                await asyncio.sleep(refresh_interval)
+                try:
+                    await self._refresh_token_in_vm(service_secret)
+                except Exception as e:
+                    logger.warning("Token refresh in MicroVM failed: %s", e)
+
+        self._token_refresh_task = asyncio.create_task(_refresh_loop())
+
+    async def _refresh_token_in_vm(self, service_secret: str):
+        """Mint a fresh token and update AGENTBOX_AUTH_TOKEN inside the MicroVM."""
+        from agentbox.api.auth import mint_service_token
+
+        token = mint_service_token(
+            service_secret,
+            subject=f"sandbox:{self._engine.session_id}",
+            ttl=self._engine._session_timeout,
+        )
+        await self._engine.execute_shell(
+            f"export AGENTBOX_AUTH_TOKEN='{token}'"
+        )
 
     def _resolve_path(self, path: str) -> str:
         """Resolve a relative path against the current working directory."""

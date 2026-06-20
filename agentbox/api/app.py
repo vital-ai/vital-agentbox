@@ -47,6 +47,18 @@ HEARTBEAT_UNHEALTHY_THRESHOLD = int(os.environ.get("AGENTBOX_HEARTBEAT_UNHEALTHY
 # Worker mode: code, browser, or both
 WORKER_MODE = os.environ.get("WORKER_MODE", "code")
 
+# Service secret for worker↔orchestrator JWT minting (never exposed to sandbox code)
+SERVICE_SECRET = os.environ.get("AGENTBOX_SERVICE_SECRET")
+
+
+def _auth_headers() -> dict:
+    """Mint a fresh short-lived service JWT for worker→orchestrator calls."""
+    if not SERVICE_SECRET:
+        return {}
+    from agentbox.api.auth import mint_service_token
+    token = mint_service_token(SERVICE_SECRET, subject=WORKER_ID, ttl=60)
+    return {"Authorization": f"Bearer {token}"}
+
 
 def _get_worker_endpoint() -> str:
     """Determine this worker's reachable endpoint."""
@@ -91,7 +103,7 @@ async def _register_with_orchestrator(manager=None, browser_pool=None):
     async def _do_register():
         """Send registration request. Returns True on success."""
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(reg_url, json=_reg_payload())
+            resp = await client.post(reg_url, json=_reg_payload(), headers=_auth_headers())
             resp.raise_for_status()
         return True
 
@@ -126,7 +138,7 @@ async def _register_with_orchestrator(manager=None, browser_pool=None):
                         "active_sandboxes": len(manager._sandboxes) if manager else 0,
                         "active_sessions": browser_pool.active_count if browser_pool else 0,
                         "state": "active",
-                    })
+                    }, headers=_auth_headers())
                     if resp.status_code == 404:
                         # Worker not known to orchestrator — re-register
                         print(f"[worker] Heartbeat got 404 — re-registering")
@@ -148,9 +160,11 @@ async def _deregister_from_orchestrator():
     import httpx
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(f"{ORCHESTRATOR_URL}/internal/workers/deregister", json={
-                "worker_id": WORKER_ID,
-            })
+            await client.post(
+                f"{ORCHESTRATOR_URL}/internal/workers/deregister",
+                json={"worker_id": WORKER_ID},
+                headers=_auth_headers(),
+            )
     except Exception:
         pass  # Best-effort on shutdown
 

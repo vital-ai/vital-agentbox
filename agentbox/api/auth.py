@@ -63,6 +63,8 @@ class JWTConfig:
     audience: Optional[str] = None
     # Keycloak-specific: client_id used for audience validation
     client_id: Optional[str] = None
+    # Service-to-service HS256 secret (worker ↔ orchestrator)
+    service_secret: Optional[str] = None
     # Claim mapping
     roles_claim: str = "realm_access.roles"
     scope_claim: str = "scope"
@@ -87,6 +89,7 @@ class JWTConfig:
             issuer=os.environ.get("AGENTBOX_JWT_ISSUER"),
             audience=os.environ.get("AGENTBOX_JWT_AUDIENCE"),
             client_id=os.environ.get("AGENTBOX_JWT_CLIENT_ID"),
+            service_secret=os.environ.get("AGENTBOX_SERVICE_SECRET"),
             roles_claim=os.environ.get("AGENTBOX_JWT_ROLES_CLAIM", "realm_access.roles"),
             scope_claim=os.environ.get("AGENTBOX_JWT_SCOPE_CLAIM", "scope"),
             tenant_claim=os.environ.get("AGENTBOX_JWT_TENANT_CLAIM", "sub"),
@@ -96,9 +99,7 @@ class JWTConfig:
 
 
 # Paths that never require auth
-EXEMPT_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
-# Prefix for internal worker-to-orchestrator communication (no auth)
-EXEMPT_PREFIX = "/internal/"
+EXEMPT_PATHS = {"/health", "/internal/health", "/docs", "/openapi.json", "/redoc"}
 
 
 @dataclass
@@ -260,9 +261,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.claims = TokenClaims()
             return await call_next(request)
 
-        # Skip exempt paths and internal routes
+        # Skip exempt paths
         path = request.url.path
-        if path in EXEMPT_PATHS or path.startswith(EXEMPT_PREFIX):
+        if path in EXEMPT_PATHS:
             request.state.claims = TokenClaims()
             return await call_next(request)
 
@@ -272,6 +273,15 @@ class JWTMiddleware(BaseHTTPMiddleware):
             return JSONResponse(status_code=401, content={"detail": "Missing Bearer token"})
 
         token = auth_header[7:]
+
+        # Try service token first (HS256 with service_secret) — fast path
+        if self.config.service_secret:
+            service_claims = _try_service_token(token, self.config.service_secret)
+            if service_claims:
+                request.state.claims = service_claims
+                return await call_next(request)
+
+        # Fall back to user token validation (JWKS / public key / secret)
         try:
             claims = decode_token(token, self.config)
         except HTTPException as e:
@@ -279,6 +289,50 @@ class JWTMiddleware(BaseHTTPMiddleware):
         request.state.claims = claims
 
         return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Service token helpers
+# ---------------------------------------------------------------------------
+
+def _try_service_token(token: str, service_secret: str) -> Optional[TokenClaims]:
+    """Attempt to decode a service JWT (HS256). Returns None if not valid."""
+    if pyjwt is None:
+        return None
+    try:
+        payload = pyjwt.decode(token, service_secret, algorithms=["HS256"])
+        if payload.get("type") != "service":
+            return None
+        return TokenClaims(
+            sub=payload.get("sub", "service"),
+            scope="service",
+            roles=["service"],
+            raw=payload,
+        )
+    except Exception:
+        return None
+
+
+def mint_service_token(service_secret: str, subject: str, ttl: int = 60) -> str:
+    """Mint a short-lived HS256 service JWT for worker↔orchestrator communication.
+
+    Args:
+        service_secret: Shared secret (AGENTBOX_SERVICE_SECRET).
+        subject: Identifier (e.g. worker ID).
+        ttl: Token lifetime in seconds (default 60).
+
+    Returns:
+        Signed JWT string.
+    """
+    if pyjwt is None:
+        raise RuntimeError("PyJWT not installed — cannot mint service tokens")
+    payload = {
+        "sub": subject,
+        "type": "service",
+        "iat": int(time.time()),
+        "exp": int(time.time()) + ttl,
+    }
+    return pyjwt.encode(payload, service_secret, algorithm="HS256")
 
 
 # ---------------------------------------------------------------------------

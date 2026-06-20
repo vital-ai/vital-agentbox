@@ -2,6 +2,59 @@
 
 All notable changes to AgentBox are documented here.
 
+## 0.1.3 (2026-06-20)
+
+### Added
+
+- **AgentCore engine** — AWS Bedrock Code Interpreter execution engine with real
+  Python, real bash, and real filesystem (MicroVM). Full lifecycle, file I/O,
+  host-intercepted commands (`edit`, `apply_patch`, `git push/pull`).
+- **Browser sessions** — SessionPool, WebSocket-based real-time browser control,
+  browser bridge for worker-to-orchestrator communication.
+- **S3 data access modes** — three modes (`tenant`, `path`, `path_credentials`)
+  for flexible S3 scoping. Credential refresh via webhook + PATCH endpoint.
+- **Credential expiry checker** — background task monitors Mode 3 sandboxes,
+  fires HMAC-signed webhooks before expiry, graceful shutdown on timeout.
+- **Worker heartbeat health** — consecutive heartbeat failures trigger 503 on
+  `/health`, allowing ECS to replace unhealthy tasks.
+- **JWT middleware fix** — returns proper 401 JSON instead of 500 (Starlette
+  `HTTPException` in middleware issue).
+- **ECS task definitions** — `deploy/` directory with orchestrator and worker
+  Fargate task definitions and deployment README.
+- **Deep Agents 0.6.10** — `AgentBoxSandbox(BaseSandbox)` replaces deprecated
+  `AgentBoxBackend`. 60/60 tests passing.
+- **Browser bridge `/internal` prefix** — worker-to-orchestrator calls bypass JWT.
+
+## 0.1.2 (2026-05-15)
+
+### Fixed
+
+- **Redis ssl=None bug** — don't pass `ssl` kwarg to `from_url()` when TLS is
+  not used (redis-py 7.x rejects it).
+- **Pyodide loading in Docker** — serve `sandbox.html` from Pyodide bundle to
+  establish a proper `http://` origin for script loading.
+- **Worker Dockerfile** — added `libxfixes3` for Playwright/Chromium.
+- **Proxy error handling** — worker 500 responses may not be JSON; wrapped in
+  try/except.
+
+### Added
+
+- **Docker Compose integration** — full stack (orchestrator + 2 workers + Redis +
+  MinIO) verified with 35/35 E2E tests passing.
+
+## 0.1.1 (2026-04-10)
+
+### Added
+
+- **Orchestrator Redis state** — shared state backend for multi-instance
+  orchestrator (workers, sandboxes, routing).
+- **Worker self-registration** — heartbeat loop with auto-re-registration on
+  orchestrator restart or Redis key expiry.
+- **JWT authentication** — JWKS/Keycloak support with configurable claims,
+  roles, tenant extraction, and admin role.
+- **Orchestrator proxy** — routes sandbox CRUD and execution to workers via
+  capacity-based selection.
+
 ## 0.1.0 (2026-02-23)
 
 ### Changed

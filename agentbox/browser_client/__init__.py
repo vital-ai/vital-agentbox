@@ -259,9 +259,10 @@ class _PyodideBackend:
 class _NativeBackend:
     """Backend for AgentCore: uses httpx for HTTP and websockets for WS."""
 
-    def __init__(self, orchestrator_url: str):
+    def __init__(self, orchestrator_url: str, auth_token: str | None = None):
         self._url = orchestrator_url
         self._ws_url = orchestrator_url.replace("http://", "ws://").replace("https://", "wss://")
+        self._auth_token = auth_token
         self._connections: dict = {}  # session_id → ws
 
     @classmethod
@@ -270,12 +271,21 @@ class _NativeBackend:
         url = orchestrator_url or os.environ.get(
             "AGENTBOX_ORCHESTRATOR_URL", "http://localhost:8090"
         )
-        return cls(url)
+        token = os.environ.get("AGENTBOX_AUTH_TOKEN")
+        return cls(url, auth_token=token)
+
+    def _auth_headers(self) -> dict:
+        if self._auth_token:
+            return {"Authorization": f"Bearer {self._auth_token}"}
+        return {}
 
     async def create_session(self, config: dict | None = None) -> str:
         import httpx
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(f"{self._url}/browsers", json=config or {})
+            resp = await client.post(
+                f"{self._url}/browsers", json=config or {},
+                headers=self._auth_headers(),
+            )
         if resp.status_code >= 400:
             raise BrowserError(f"Failed to create session: {resp.status_code} {resp.text}")
         return resp.json()["session_id"]
@@ -288,7 +298,8 @@ class _NativeBackend:
         if ws is None:
             import websockets
             ws_url = f"{self._ws_url}/browsers/{session_id}/ws"
-            ws = await websockets.connect(ws_url)
+            extra_headers = self._auth_headers() or None
+            ws = await websockets.connect(ws_url, additional_headers=extra_headers)
             # Consume "connected" message
             await asyncio.wait_for(ws.recv(), timeout=5)
             self._connections[session_id] = ws
@@ -308,4 +319,7 @@ class _NativeBackend:
         # Delete via REST
         import httpx
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.delete(f"{self._url}/browsers/{session_id}")
+            await client.delete(
+                f"{self._url}/browsers/{session_id}",
+                headers=self._auth_headers(),
+            )

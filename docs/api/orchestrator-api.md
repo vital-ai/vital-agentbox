@@ -6,7 +6,10 @@
 REST API for the AgentBox orchestrator. Handles worker registration,
 request routing, and sandbox lifecycle across multiple workers.
 
-**Version**: 0.1.0
+**Version**: 0.1.3
+
+> **Note**: Endpoints under `/internal/*` are exempt from JWT authentication
+> and are used for worker-to-orchestrator communication.
 
 ## Other
 
@@ -188,6 +191,11 @@ Create Sandbox
 |-------|------|----------|-------------|
 | `box_type` | `string` | No | Box Type (default: `mem`) |
 | `repo_id` | `string | null` | No | Repo Id |
+| `engine` | `string | null` | No | Execution engine: `pyodide` (default) or `agentcore` |
+| `data_path` | `string | null` | No | S3 data path (Mode 2/3 only) |
+| `s3_credentials` | `S3Credentials | null` | No | Caller-provided STS creds (Mode 3 only) |
+| `credential_webhook_url` | `string | null` | No | Webhook URL for credential expiry notifications (Mode 3) |
+| `webhook_secret` | `string | null` | No | HMAC secret for signing webhook payloads (Mode 3) |
 | `timeout` | `integer | null` | No | Timeout |
 | `metadata` | `object | null` | No | Metadata |
 
@@ -199,6 +207,33 @@ Create Sandbox
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `detail` | `array[ValidationError]` | No | Detail |
+
+---
+
+### `PATCH /sandboxes/{sandbox_id}/credentials`
+
+Update Credentials
+
+Refresh S3 credentials for a running Mode 3 sandbox. Resets the credential
+expiry timer. Proxied to the worker hosting the sandbox.
+
+**Parameters:**
+
+| Name | In | Type | Required | Description |
+|------|----|------|----------|-----------|
+| `sandbox_id` | path | `string` | Yes |  |
+
+**Request body** (`application/json`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `s3_credentials` | `S3Credentials` | Yes | Fresh STS credentials |
+
+**Responses:**
+
+- **200**: Successful Response
+- **404**: Sandbox not found
+- **422**: Validation Error
 
 ---
 
@@ -471,6 +506,68 @@ Shell
 
 ---
 
+## browsers
+
+### `POST /browsers`
+
+Create Browser Session
+
+Creates a new Playwright browser session on a browser-capable worker.
+
+**Request body** (`application/json`):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `viewport_width` | `integer` | No | Browser width (default: `1280`) |
+| `viewport_height` | `integer` | No | Browser height (default: `720`) |
+| `user_agent` | `string | null` | No | Custom user agent |
+
+**Responses:**
+
+- **200**: Successful Response — `{"session_id": "...", "ws_url": "ws://..."}`
+- **503**: No browser-capable workers available
+
+---
+
+### `DELETE /browsers/{session_id}`
+
+Close Browser Session
+
+**Parameters:**
+
+| Name | In | Type | Required | Description |
+|------|----|------|----------|-----------|
+| `session_id` | path | `string` | Yes |  |
+
+**Responses:**
+
+- **200**: Successful Response
+- **404**: Session not found
+
+---
+
+### `WebSocket /browsers/{session_id}/ws`
+
+Browser Command WebSocket
+
+Real-time browser control via JSON messages.
+
+**Messages (client → server):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `action` | `string` | Command: `navigate`, `click`, `type`, `screenshot`, `evaluate`, etc. |
+| `params` | `object` | Action-specific parameters |
+
+**Messages (server → client):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | `string` | `ok` or `error` |
+| `result` | `any` | Action result (screenshot base64, page content, etc.) |
+
+---
+
 ## workers
 
 ### `POST /internal/workers/deregister`
@@ -587,8 +684,30 @@ List Workers
 |-------|------|----------|-------------|
 | `box_type` | `string` | No | Box Type (default: `mem`) |
 | `repo_id` | `string | null` | No | Repo Id |
+| `engine` | `string | null` | No | `pyodide` (default) or `agentcore` |
+| `data_path` | `string | null` | No | S3 data path (Mode 2/3) |
+| `s3_credentials` | `S3Credentials | null` | No | Caller STS creds (Mode 3) |
+| `credential_webhook_url` | `string | null` | No | Webhook for credential expiry |
+| `webhook_secret` | `string | null` | No | HMAC secret for webhook |
 | `timeout` | `integer | null` | No | Timeout |
 | `metadata` | `object | null` | No | Metadata |
+
+### S3Credentials
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `access_key_id` | `string` | Yes | AWS access key ID |
+| `secret_access_key` | `string` | Yes | AWS secret access key |
+| `session_token` | `string` | Yes | STS session token |
+| `region` | `string | null` | No | AWS region |
+| `endpoint_url` | `string | null` | No | Custom S3 endpoint |
+| `expires_at` | `string | null` | No | ISO 8601 expiry timestamp |
+
+### UpdateCredentialsRequest
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `s3_credentials` | `S3Credentials` | Yes | Fresh STS credentials |
 
 ### ExecuteRequest
 
