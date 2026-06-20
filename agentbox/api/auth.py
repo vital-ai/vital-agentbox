@@ -253,6 +253,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
         self.config = config
 
     async def dispatch(self, request: Request, call_next):
+        from starlette.responses import JSONResponse
+
         # Skip if JWT not enabled
         if not self.config.enabled:
             request.state.claims = TokenClaims()
@@ -267,10 +269,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # Extract Bearer token
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing Bearer token")
+            return JSONResponse(status_code=401, content={"detail": "Missing Bearer token"})
 
         token = auth_header[7:]
-        claims = decode_token(token, self.config)
+        try:
+            claims = decode_token(token, self.config)
+        except HTTPException as e:
+            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
         request.state.claims = claims
 
         return await call_next(request)
