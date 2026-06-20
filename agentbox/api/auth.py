@@ -23,7 +23,20 @@ import os
 import time
 import logging
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional
+
+
+class DataAccessMode(str, Enum):
+    """S3 data access scoping mode, configured at the service level.
+
+    - tenant: S3 paths prefixed with JWT sub/tenant claim (default, current behavior)
+    - path: caller specifies data_path, JWT is authentication only
+    - path_credentials: caller specifies data_path + S3 credentials
+    """
+    TENANT = "tenant"
+    PATH = "path"
+    PATH_CREDENTIALS = "path_credentials"
 
 from fastapi import Request, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -55,9 +68,16 @@ class JWTConfig:
     scope_claim: str = "scope"
     tenant_claim: str = "sub"
     admin_role: str = "admin"
+    data_access_mode: DataAccessMode = DataAccessMode.TENANT
 
     @classmethod
     def from_env(cls) -> "JWTConfig":
+        mode_str = os.environ.get("AGENTBOX_DATA_ACCESS_MODE", "tenant").lower()
+        try:
+            data_access_mode = DataAccessMode(mode_str)
+        except ValueError:
+            data_access_mode = DataAccessMode.TENANT
+            logger.warning("Invalid AGENTBOX_DATA_ACCESS_MODE=%r, defaulting to 'tenant'", mode_str)
         return cls(
             enabled=os.environ.get("AGENTBOX_JWT_ENABLED", "").lower() == "true",
             secret=os.environ.get("AGENTBOX_JWT_SECRET"),
@@ -71,6 +91,7 @@ class JWTConfig:
             scope_claim=os.environ.get("AGENTBOX_JWT_SCOPE_CLAIM", "scope"),
             tenant_claim=os.environ.get("AGENTBOX_JWT_TENANT_CLAIM", "sub"),
             admin_role=os.environ.get("AGENTBOX_JWT_ADMIN_ROLE", "admin"),
+            data_access_mode=data_access_mode,
         )
 
 

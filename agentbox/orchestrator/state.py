@@ -29,8 +29,11 @@ from typing import Optional
 class WorkerInfo:
     worker_id: str
     endpoint: str  # e.g. "http://10.0.1.5:8000"
+    type: str = "code"  # code, browser, both
     max_sandboxes: int = 50
     active_sandboxes: int = 0
+    max_sessions: int = 0  # browser sessions capacity
+    active_sessions: int = 0
     state: str = "active"  # active, draining, dead
     last_heartbeat: float = 0.0
     registered_at: float = 0.0
@@ -39,6 +42,10 @@ class WorkerInfo:
     def available(self) -> int:
         return max(0, self.max_sandboxes - self.active_sandboxes)
 
+    @property
+    def available_sessions(self) -> int:
+        return max(0, self.max_sessions - self.active_sessions)
+
 
 @dataclass
 class SandboxRecord:
@@ -46,10 +53,12 @@ class SandboxRecord:
     worker_id: str
     box_type: str = "mem"  # mem, git
     repo_id: Optional[str] = None
+    data_path: Optional[str] = None  # caller-provided S3 path (mode 2/3)
     state: str = "running"  # running, idle, destroyed
     created_at: float = 0.0
     last_active: float = 0.0
     created_by: Optional[str] = None  # tenant from JWT sub
+    credential_expires_at: Optional[str] = None  # ISO 8601 (mode 3)
     metadata: dict = field(default_factory=dict)
 
 
@@ -104,8 +113,11 @@ class OrchestratorState:
         return WorkerInfo(
             worker_id=data.get("worker_id", worker_id),
             endpoint=data.get("endpoint", ""),
+            type=data.get("type", "code"),
             max_sandboxes=int(data.get("max_sandboxes", 50)),
             active_sandboxes=int(data.get("active_sandboxes", 0)),
+            max_sessions=int(data.get("max_sessions", 0)),
+            active_sessions=int(data.get("active_sessions", 0)),
             state=data.get("state", "active"),
             last_heartbeat=float(data.get("last_heartbeat", 0)),
             registered_at=float(data.get("registered_at", 0)),
@@ -126,12 +138,40 @@ class OrchestratorState:
             workers.append(w)
         return workers
 
-    async def pick_worker(self) -> Optional[WorkerInfo]:
-        """Pick the active worker with the most available slots."""
+    async def pick_worker(self, worker_type: str = "code") -> Optional[WorkerInfo]:
+        """Pick the active worker with the most available slots.
+
+        Args:
+            worker_type: "code" or "browser". Workers with type="both"
+                         are eligible for either.
+        """
         workers = await self.list_workers(state="active")
-        if not workers:
+        # Filter by type
+        eligible = [
+            w for w in workers
+            if w.type == worker_type or w.type == "both"
+        ]
+        if not eligible:
             return None
-        return max(workers, key=lambda w: w.available)
+        if worker_type == "browser":
+            return max(eligible, key=lambda w: w.available_sessions)
+        return max(eligible, key=lambda w: w.available)
+
+    # ------------------------------------------------------------------
+    # Browser Session Routing
+    # ------------------------------------------------------------------
+
+    async def set_browser_route(self, session_id: str, worker_id: str, ttl: int = 3600) -> None:
+        """Map browser session_id → worker_id for request routing."""
+        await self._redis.set(self._key("browser_route", session_id), worker_id, ex=ttl)
+
+    async def get_browser_route(self, session_id: str) -> Optional[str]:
+        """Look up which worker owns a browser session."""
+        return await self._redis.get(self._key("browser_route", session_id))
+
+    async def delete_browser_route(self, session_id: str) -> None:
+        """Remove a browser session route."""
+        await self._redis.delete(self._key("browser_route", session_id))
 
     # ------------------------------------------------------------------
     # Sandbox Routing Table
@@ -161,10 +201,12 @@ class OrchestratorState:
             "worker_id": record.worker_id,
             "box_type": record.box_type,
             "repo_id": record.repo_id or "",
+            "data_path": record.data_path or "",
             "state": record.state,
             "created_at": str(record.created_at or time.time()),
             "last_active": str(record.last_active or time.time()),
             "created_by": record.created_by or "",
+            "credential_expires_at": record.credential_expires_at or "",
             "metadata": json.dumps(record.metadata),
         }
         await self._redis.hset(key, mapping=data)
@@ -190,10 +232,12 @@ class OrchestratorState:
             worker_id=data.get("worker_id", ""),
             box_type=data.get("box_type", "mem"),
             repo_id=data.get("repo_id") or None,
+            data_path=data.get("data_path") or None,
             state=data.get("state", "running"),
             created_at=float(data.get("created_at", 0)),
             last_active=float(data.get("last_active", 0)),
             created_by=data.get("created_by") or None,
+            credential_expires_at=data.get("credential_expires_at") or None,
             metadata=json.loads(data.get("metadata", "{}")),
         )
 
@@ -243,6 +287,14 @@ class OrchestratorState:
             records = records[offset:offset + limit]
 
         return records
+
+    async def update_credential_expiry(self, sandbox_id: str, credential_expires_at: str) -> None:
+        """Update the credential_expires_at field on a sandbox record."""
+        key = self._key("sandbox", sandbox_id)
+        await self._redis.hset(key, mapping={
+            "credential_expires_at": credential_expires_at,
+            "last_active": str(time.time()),
+        })
 
     # ------------------------------------------------------------------
     # Aggregate Metrics

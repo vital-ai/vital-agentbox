@@ -20,13 +20,18 @@ router = APIRouter()
 class WorkerRegisterRequest(BaseModel):
     worker_id: str
     endpoint: str
+    type: str = "code"  # code, browser, both
     max_sandboxes: int = 50
     active_sandboxes: int = 0
+    max_sessions: int = 0
+    active_sessions: int = 0
 
 
 class WorkerHeartbeatRequest(BaseModel):
     worker_id: str
+    type: str = "code"
     active_sandboxes: int = 0
+    active_sessions: int = 0
     state: str = "active"
 
 
@@ -43,8 +48,11 @@ async def register_worker(req: WorkerRegisterRequest, request: Request):
     info = WorkerInfo(
         worker_id=req.worker_id,
         endpoint=req.endpoint,
+        type=req.type,
         max_sandboxes=req.max_sandboxes,
         active_sandboxes=req.active_sandboxes,
+        max_sessions=req.max_sessions,
+        active_sessions=req.active_sessions,
         state="active",
         last_heartbeat=time.time(),
         registered_at=time.time(),
@@ -61,6 +69,7 @@ async def worker_heartbeat(req: WorkerHeartbeatRequest, request: Request):
     if not existing:
         raise HTTPException(status_code=404, detail=f"Worker {req.worker_id} not registered")
     existing.active_sandboxes = req.active_sandboxes
+    existing.active_sessions = req.active_sessions
     existing.state = req.state
     existing.last_heartbeat = time.time()
     await state.register_worker(existing, ttl=60)
@@ -87,9 +96,13 @@ async def list_workers(request: Request, state_filter: Optional[str] = None):
             {
                 "worker_id": w.worker_id,
                 "endpoint": w.endpoint,
+                "type": w.type,
                 "max_sandboxes": w.max_sandboxes,
                 "active_sandboxes": w.active_sandboxes,
                 "available": w.available,
+                "max_sessions": w.max_sessions,
+                "active_sessions": w.active_sessions,
+                "available_sessions": w.available_sessions,
                 "state": w.state,
                 "last_heartbeat": w.last_heartbeat,
             }

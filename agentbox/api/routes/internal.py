@@ -44,12 +44,17 @@ async def metrics(mgr: BoxManager = Depends(get_manager)):
 @router.post("/sandboxes", status_code=201)
 async def create_sandbox(req: CreateSandboxRequest,
                          mgr: BoxManager = Depends(get_manager)):
+    from agentbox.browser.bridge import browser_message_handler
+
     try:
         info = await mgr.create_sandbox(
             sandbox_id=req.sandbox_id,
             box_type=req.box_type,
             timeout=req.timeout,
+            message_handler=browser_message_handler,
             repo_id=req.repo_id,
+            engine=req.engine,
+            s3_credentials=req.s3_credentials,
         )
         return info
     except RuntimeError as e:
@@ -79,6 +84,24 @@ async def destroy_sandbox(sandbox_id: str,
     if not destroyed:
         raise HTTPException(status_code=404, detail=f"Sandbox {sandbox_id!r} not found.")
     return {"status": "destroyed", "sandbox_id": sandbox_id}
+
+
+# --- Credential refresh (Mode 3) ---
+
+@router.patch("/sandboxes/{sandbox_id}/credentials")
+async def update_credentials(sandbox_id: str, req: dict,
+                             mgr: BoxManager = Depends(get_manager)):
+    """Update S3 credentials on a running sandbox (proxied from orchestrator)."""
+    s3_credentials = req.get("s3_credentials")
+    if not s3_credentials:
+        raise HTTPException(status_code=400, detail="s3_credentials is required")
+    try:
+        result = await mgr.update_credentials(sandbox_id, s3_credentials)
+        return result
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Sandbox {sandbox_id!r} not found.")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # --- Execution ---
@@ -119,20 +142,26 @@ async def read_file(sandbox_id: str,
                     mgr: BoxManager = Depends(get_manager)):
     box = _get_box(sandbox_id, mgr)
     mgr._sandboxes[sandbox_id].touch()
-    if binary:
-        import base64
-        data = await box.memfs.read_file_binary(path)
-        if data is None:
+    if hasattr(box, 'memfs') and box.memfs is not None:
+        if binary:
+            import base64
+            data = await box.memfs.read_file_binary(path)
+            if data is None:
+                return {"path": path, "content": None, "exists": False}
+            return {
+                "path": path,
+                "content": base64.b64encode(data).decode("ascii"),
+                "exists": True,
+            }
+        content = await box.memfs.read_file(path)
+        if content is None:
             return {"path": path, "content": None, "exists": False}
-        return {
-            "path": path,
-            "content": base64.b64encode(data).decode("ascii"),
-            "exists": True,
-        }
-    content = await box.memfs.read_file(path)
-    if content is None:
-        return {"path": path, "content": None, "exists": False}
-    return {"path": path, "content": content, "exists": True}
+        return {"path": path, "content": content, "exists": True}
+    else:
+        content = await box.read_file(path)
+        if content is None:
+            return {"path": path, "content": None, "exists": False}
+        return {"path": path, "content": content, "exists": True}
 
 
 @router.post("/sandboxes/{sandbox_id}/files/write", status_code=201)
@@ -140,7 +169,10 @@ async def write_file(sandbox_id: str, req: WriteFileRequest,
                      mgr: BoxManager = Depends(get_manager)):
     box = _get_box(sandbox_id, mgr)
     mgr._sandboxes[sandbox_id].touch()
-    ok = await box.memfs.write_file(req.path, req.content)
+    if hasattr(box, 'memfs') and box.memfs is not None:
+        ok = await box.memfs.write_file(req.path, req.content)
+    else:
+        ok = await box.write_file(req.path, req.content)
     if not ok:
         raise HTTPException(status_code=500, detail="Write failed.")
     return {"path": req.path, "written": True}

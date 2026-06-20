@@ -9,12 +9,26 @@ from agentbox.manager.box_manager import BoxManager
 router = APIRouter(tags=["system"])
 
 
-@router.get("/health", response_model=HealthResponse)
-async def health(mgr: BoxManager = Depends(get_manager)):
-    m = mgr.metrics()
-    return HealthResponse(status="ok", **m)
+def _try_get_manager():
+    """Return BoxManager or None (browser-only mode has no BoxManager)."""
+    try:
+        return get_manager()
+    except RuntimeError:
+        return None
+
+
+@router.get("/health")
+async def health():
+    mgr = _try_get_manager()
+    if mgr:
+        m = mgr.metrics()
+        return HealthResponse(status="ok", **m)
+    return {"status": "ok"}
 
 
 @router.get("/metrics")
-async def metrics(mgr: BoxManager = Depends(get_manager)):
-    return mgr.metrics()
+async def metrics():
+    mgr = _try_get_manager()
+    if mgr:
+        return mgr.metrics()
+    return {"status": "ok", "sandboxes": 0}

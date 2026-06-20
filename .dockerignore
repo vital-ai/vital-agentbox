@@ -21,6 +21,7 @@ daytona/
 logs/
 scripts/*
 !scripts/download_pyodide.sh
+!scripts/worker-entrypoint.sh
 .env
 .env.*
 .DS_Store

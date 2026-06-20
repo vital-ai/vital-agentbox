@@ -14,8 +14,14 @@ from agentbox.box.shell.environment import ShellResult
 from agentbox.box.git.sync import push_to_store, pull_from_store
 
 
-def _get_storage():
-    """Get the configured storage backend. Returns None if not configured."""
+def _get_storage(s3_credentials=None):
+    """Get the configured storage backend. Returns None if not configured.
+
+    Args:
+        s3_credentials: Optional dict with caller-provided S3 credentials
+            (Mode 3: path_credentials). When provided, these override the
+            env-based credentials.
+    """
     # Import here to avoid circular imports
     from agentbox.box.git.storage import LocalStorageBackend, S3StorageBackend
 
@@ -29,10 +35,40 @@ def _get_storage():
         if not bucket:
             return None
         prefix = os.environ.get("AGENTBOX_GIT_S3_PREFIX", "repos/")
-        endpoint = os.environ.get("AGENTBOX_GIT_S3_ENDPOINT")
-        region = os.environ.get("AGENTBOX_GIT_S3_REGION")
-        return S3StorageBackend(bucket, prefix, endpoint_url=endpoint, region_name=region)
+
+        if s3_credentials:
+            # Mode 3: use caller-provided credentials
+            return S3StorageBackend(
+                bucket, prefix,
+                endpoint_url=s3_credentials.get("endpoint_url"),
+                region_name=s3_credentials.get("region"),
+                access_key=s3_credentials.get("access_key_id"),
+                secret_key=s3_credentials.get("secret_access_key"),
+                session_token=s3_credentials.get("session_token"),
+            )
+        else:
+            # Mode 1/2: use env-based credentials
+            endpoint = os.environ.get("AGENTBOX_GIT_S3_ENDPOINT")
+            region = os.environ.get("AGENTBOX_GIT_S3_REGION")
+            access_key = os.environ.get("AGENTBOX_GIT_S3_ACCESS_KEY")
+            secret_key = os.environ.get("AGENTBOX_GIT_S3_SECRET_KEY")
+            return S3StorageBackend(
+                bucket, prefix, endpoint_url=endpoint, region_name=region,
+                access_key=access_key, secret_key=secret_key,
+            )
     
+    return None
+
+
+def _get_s3_credentials(env):
+    """Extract caller-provided S3 credentials from shell environment, if any."""
+    import json
+    creds_json = env.variables.get("AGENTBOX_S3_CREDENTIALS")
+    if creds_json:
+        try:
+            return json.loads(creds_json)
+        except (json.JSONDecodeError, TypeError):
+            pass
     return None
 
 
@@ -56,7 +92,7 @@ async def host_git_push(args, stdin, env, memfs):
             stderr="git push: no repo_id configured. Set AGENTBOX_REPO_ID or use GitBox with repo_id.\n"
         )
 
-    storage = _get_storage()
+    storage = _get_storage(s3_credentials=_get_s3_credentials(env))
     if storage is None:
         return ShellResult(
             exit_code=1,
@@ -137,7 +173,7 @@ async def host_git_pull(args, stdin, env, memfs):
             stderr="git pull: no repo_id configured.\n"
         )
 
-    storage = _get_storage()
+    storage = _get_storage(s3_credentials=_get_s3_credentials(env))
     if storage is None:
         return ShellResult(
             exit_code=1,
@@ -216,7 +252,7 @@ async def host_git_fetch(args, stdin, env, memfs):
             stderr="git fetch: no repo_id configured.\n"
         )
 
-    storage = _get_storage()
+    storage = _get_storage(s3_credentials=_get_s3_credentials(env))
     if storage is None:
         return ShellResult(
             exit_code=1,

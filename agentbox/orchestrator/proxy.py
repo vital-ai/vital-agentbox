@@ -57,6 +57,8 @@ async def proxy_to_worker(
                 resp = await client.get(url, params=params)
             elif method == "POST":
                 resp = await client.post(url, json=body)
+            elif method == "PATCH":
+                resp = await client.patch(url, json=body)
             elif method == "DELETE":
                 resp = await client.delete(url, params=params)
             else:

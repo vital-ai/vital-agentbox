@@ -131,7 +131,10 @@ class S3StorageBackend(StorageBackend):
 
     def __init__(self, bucket: str, prefix: str = "repos/",
                  endpoint_url: str | None = None,
-                 region_name: str | None = None):
+                 region_name: str | None = None,
+                 access_key: str | None = None,
+                 secret_key: str | None = None,
+                 session_token: str | None = None):
         try:
             import boto3
         except ImportError:
@@ -145,7 +148,29 @@ class S3StorageBackend(StorageBackend):
             kwargs["endpoint_url"] = endpoint_url
         if region_name:
             kwargs["region_name"] = region_name
+        if access_key and secret_key:
+            kwargs["aws_access_key_id"] = access_key
+            kwargs["aws_secret_access_key"] = secret_key
+            if session_token:
+                kwargs["aws_session_token"] = session_token
 
+        self._s3 = boto3.client("s3", **kwargs)
+
+    def update_credentials(self, access_key: str, secret_key: str,
+                           session_token: str | None = None,
+                           endpoint_url: str | None = None,
+                           region_name: str | None = None) -> None:
+        """Replace the boto3 client with new credentials (for credential refresh)."""
+        import boto3
+        kwargs = {}
+        if endpoint_url:
+            kwargs["endpoint_url"] = endpoint_url
+        if region_name:
+            kwargs["region_name"] = region_name
+        kwargs["aws_access_key_id"] = access_key
+        kwargs["aws_secret_access_key"] = secret_key
+        if session_token:
+            kwargs["aws_session_token"] = session_token
         self._s3 = boto3.client("s3", **kwargs)
 
     def _key(self, repo_id: str, path: str = "") -> str:

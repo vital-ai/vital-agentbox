@@ -18,15 +18,16 @@ class SandboxState(str, Enum):
 class SandboxInfo:
     """Metadata for a managed sandbox."""
 
-    __slots__ = ("sandbox_id", "box", "state", "created_at", "last_used_at", "box_type")
+    __slots__ = ("sandbox_id", "box", "state", "created_at", "last_used_at", "box_type", "engine")
 
-    def __init__(self, sandbox_id, box, box_type="mem"):
+    def __init__(self, sandbox_id, box, box_type="mem", engine="pyodide"):
         self.sandbox_id = sandbox_id
         self.box = box
         self.state = SandboxState.WARMING
         self.created_at = time.time()
         self.last_used_at = self.created_at
         self.box_type = box_type
+        self.engine = engine
 
     def touch(self):
         self.last_used_at = time.time()
@@ -37,6 +38,7 @@ class SandboxInfo:
             "sandbox_id": self.sandbox_id,
             "state": self.state.value,
             "box_type": self.box_type,
+            "engine": self.engine,
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
             "age_seconds": round(now - self.created_at, 1),
@@ -112,7 +114,8 @@ class BoxManager:
 
     async def create_sandbox(self, sandbox_id=None, box_type="mem",
                              timeout=None, message_handler=None,
-                             repo_id=None):
+                             repo_id=None, engine=None,
+                             s3_credentials=None):
         """Create and start a new sandbox.
 
         Args:
@@ -121,13 +124,26 @@ class BoxManager:
             timeout: Per-execution timeout override.
             message_handler: Custom sendMessage handler.
             repo_id: Repository ID for git box (enables push/pull sync).
+            engine: Execution engine type — "pyodide" (default) or
+                    "agentcore" (future). Currently only "pyodide" is
+                    supported.
+            s3_credentials: Optional dict with caller-provided S3 credentials
+                    (Mode 3: path_credentials). Keys: access_key_id,
+                    secret_access_key, session_token, region, endpoint_url.
 
         Returns:
             dict with sandbox_id and state.
 
         Raises:
             RuntimeError: If pool is at capacity.
+            ValueError: If an unsupported engine is requested.
         """
+        engine = engine or os.environ.get("AGENTBOX_ENGINE", "pyodide")
+        if engine not in ("pyodide", "agentcore"):
+            raise ValueError(
+                f"Unsupported engine {engine!r}. "
+                "Supported: 'pyodide', 'agentcore'."
+            )
         async with self._lock:
             if len(self._sandboxes) >= self.max_sandboxes:
                 raise RuntimeError(
@@ -141,18 +157,25 @@ class BoxManager:
             if sandbox_id in self._sandboxes:
                 raise ValueError(f"Sandbox {sandbox_id!r} already exists.")
 
-            if box_type == "git":
+            if engine == "agentcore":
+                from agentbox.box.agentcore_box import AgentCoreBox
+                box = AgentCoreBox(
+                    timeout=timeout or self.exec_timeout,
+                    repo_id=repo_id,
+                )
+            elif box_type == "git":
                 box = GitBox(
                     repo_id=repo_id,
                     timeout=timeout or self.exec_timeout,
                     message_handler=message_handler,
+                    s3_credentials=s3_credentials,
                 )
             else:
                 box = CodeExecutorBox(
                     timeout=timeout or self.exec_timeout,
                     message_handler=message_handler,
                 )
-            info = SandboxInfo(sandbox_id, box, box_type=box_type)
+            info = SandboxInfo(sandbox_id, box, box_type=box_type, engine=engine)
             self._sandboxes[sandbox_id] = info
 
         # Start outside the lock (browser launch is slow)
@@ -223,6 +246,48 @@ class BoxManager:
         info = self._get_info(sandbox_id)
         info.touch()
         return await info.box.write_file(path, content)
+
+    # ------------------------------------------------------------------
+    # Credential refresh (Mode 3)
+    # ------------------------------------------------------------------
+
+    async def update_credentials(self, sandbox_id, s3_credentials):
+        """Update S3 credentials on a running sandbox.
+
+        Swaps the boto3 client credentials on the storage backend and
+        updates the shell env so host-delegated git push/pull picks up
+        the new creds.
+
+        Args:
+            sandbox_id: Target sandbox.
+            s3_credentials: Dict with access_key_id, secret_access_key,
+                session_token, region, endpoint_url.
+
+        Raises:
+            KeyError: Sandbox not found.
+            ValueError: Sandbox doesn't support credential updates.
+        """
+        info = self._get_info(sandbox_id)
+        box = info.box
+
+        from agentbox.box.git_box import GitBox
+        if not isinstance(box, GitBox):
+            raise ValueError(f"Sandbox {sandbox_id!r} is not a GitBox — credential update not supported.")
+
+        # Update the stored credentials on the box
+        box._s3_credentials = s3_credentials
+
+        # Update shell env for host-delegated git push/pull
+        import json as _json
+        if hasattr(box, '_shell') and box._shell:
+            box._shell.env.variables["AGENTBOX_S3_CREDENTIALS"] = _json.dumps(s3_credentials)
+
+        # Swap the boto3 client on any live storage backend
+        # (The next git push/pull will create a fresh S3StorageBackend
+        # via _get_storage() which reads box._s3_credentials)
+
+        info.touch()
+        return {"status": "credentials_updated", "sandbox_id": sandbox_id}
 
     # ------------------------------------------------------------------
     # Metrics

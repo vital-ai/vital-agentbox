@@ -40,6 +40,8 @@ client = [
 # Worker: runs Chromium + Pyodide sandboxes
 worker = [
     "playwright",
+    "camoufox",
+    "beautifulsoup4>=4.12",
     "python-magic>=0.4.27",
     "markdown-it-py>=3.0",
     "mdit-py-plugins>=0.4",
@@ -62,11 +64,16 @@ orchestrator = [
     "PyJWT>=2.8",
     "httpx>=0.25",
 ]
+# AgentCore: AWS Bedrock Code Interpreter engine
+agentcore = [
+    "bedrock-agentcore>=1.15.0",
+    "boto3>=1.42",
+]
 # LangChain / LangGraph / Deep Agents integration
 langchain = [
     "httpx>=0.25",
-    "langchain-core>=0.2",
-    "deepagents>=0.4",
+    "langchain-core>=1.4.7",
+    "deepagents>=0.6.10",
 ]
 # Development / testing
 dev = [
@@ -74,8 +81,8 @@ dev = [
     "pytest-asyncio>=0.21",
     "httpx>=0.25",
     "asgi-lifespan>=2.0",
-    "deepagents>=0.4",
-    "langchain-core>=0.2",
+    "deepagents>=0.6.10",
+    "langchain-core>=1.4.7",
     "build",
     "twine",
 ]

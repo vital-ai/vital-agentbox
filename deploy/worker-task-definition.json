@@ -1,0 +1,75 @@
+{
+  "family": "agentbox-worker",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "2048",
+  "memory": "4096",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/agentbox-worker-task-role",
+  "containerDefinitions": [
+    {
+      "name": "worker",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/agentbox-worker:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "AGENTBOX_MAX_SANDBOXES", "value": "50" },
+        { "name": "AGENTBOX_AGENTCORE_REGION", "value": "us-east-1" },
+        { "name": "AGENTBOX_GIT_STORE", "value": "s3" },
+        { "name": "AGENTBOX_GIT_S3_REGION", "value": "us-east-1" },
+        { "name": "DISPLAY", "value": ":99" }
+      ],
+      "secrets": [
+        {
+          "name": "AGENTBOX_ORCHESTRATOR_URL",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/ORCHESTRATOR_URL"
+        },
+        {
+          "name": "AGENTBOX_GIT_S3_BUCKET",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/GIT_S3_BUCKET"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8000/internal/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/agentbox-worker",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "linuxParameters": {
+        "initProcessEnabled": true,
+        "sharedMemorySize": 2048
+      },
+      "mountPoints": [
+        {
+          "sourceVolume": "dshm",
+          "containerPath": "/dev/shm",
+          "readOnly": false
+        }
+      ]
+    }
+  ],
+  "volumes": [
+    {
+      "name": "dshm",
+      "host": {}
+    }
+  ]
+}

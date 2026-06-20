@@ -12,7 +12,7 @@ git repo is initialized.
 import logging
 import os
 
-from agentbox.box.code_exec_box import CodeExecutorBox, PYODIDE_URL
+from agentbox.box.code_exec_box import CodeExecutorBox
 from agentbox.box.git.fs_adapter import FS_ADAPTER_JS, GIT_HELPERS_JS
 from agentbox.box.git.sync import pull_from_store
 
@@ -27,8 +27,15 @@ ISOMORPHIC_GIT_CDN = os.environ.get(
 DEFAULT_WORKSPACE = "/workspace"
 
 
-def _get_storage():
-    """Get the configured storage backend. Returns None if not configured."""
+def _get_storage(s3_credentials=None):
+    """Get the configured storage backend. Returns None if not configured.
+
+    Args:
+        s3_credentials: Optional dict with caller-provided S3 credentials
+            (Mode 3: path_credentials). When provided, these override the
+            env-based credentials. Keys: access_key_id, secret_access_key,
+            session_token, region, endpoint_url.
+    """
     from agentbox.box.git.storage import LocalStorageBackend, S3StorageBackend
 
     backend_type = os.environ.get("AGENTBOX_GIT_STORE", "local")
@@ -41,9 +48,27 @@ def _get_storage():
         if not bucket:
             return None
         prefix = os.environ.get("AGENTBOX_GIT_S3_PREFIX", "repos/")
-        endpoint = os.environ.get("AGENTBOX_GIT_S3_ENDPOINT")
-        region = os.environ.get("AGENTBOX_GIT_S3_REGION")
-        return S3StorageBackend(bucket, prefix, endpoint_url=endpoint, region_name=region)
+
+        if s3_credentials:
+            # Mode 3: use caller-provided credentials
+            return S3StorageBackend(
+                bucket, prefix,
+                endpoint_url=s3_credentials.get("endpoint_url"),
+                region_name=s3_credentials.get("region"),
+                access_key=s3_credentials.get("access_key_id"),
+                secret_key=s3_credentials.get("secret_access_key"),
+                session_token=s3_credentials.get("session_token"),
+            )
+        else:
+            # Mode 1/2: use env-based credentials (IAM or static keys)
+            endpoint = os.environ.get("AGENTBOX_GIT_S3_ENDPOINT")
+            region = os.environ.get("AGENTBOX_GIT_S3_REGION")
+            access_key = os.environ.get("AGENTBOX_GIT_S3_ACCESS_KEY")
+            secret_key = os.environ.get("AGENTBOX_GIT_S3_SECRET_KEY")
+            return S3StorageBackend(
+                bucket, prefix, endpoint_url=endpoint, region_name=region,
+                access_key=access_key, secret_key=secret_key,
+            )
 
     return None
 
@@ -66,19 +91,23 @@ class GitBox(CodeExecutorBox):
     """
 
     def __init__(self, repo_id=None, workspace=DEFAULT_WORKSPACE,
-                 auto_sync=True, **kwargs):
+                 auto_sync=True, s3_credentials=None, **kwargs):
         """
         Args:
             repo_id: Repository identifier for persistent storage.
                      None = ephemeral git repo (no sync).
             workspace: Path for the git working directory.
             auto_sync: If True, auto-sync to storage on commit.
+            s3_credentials: Optional dict with caller-provided S3 credentials
+                     (Mode 3: path_credentials). Keys: access_key_id,
+                     secret_access_key, session_token, region, endpoint_url.
             **kwargs: Passed to CodeExecutorBox (timeout, message_handler).
         """
         super().__init__(**kwargs)
         self.repo_id = repo_id
         self.workspace = workspace
         self.auto_sync = auto_sync
+        self._s3_credentials = s3_credentials
 
     async def start(self):
         """Launch browser, load Pyodide + isomorphic-git, init or restore repo."""
@@ -99,13 +128,19 @@ class GitBox(CodeExecutorBox):
         if self.repo_id:
             await self.run_shell(f"export AGENTBOX_REPO_ID={self.repo_id}")
 
+        # Store s3_credentials in env for host-delegated git push/pull
+        if self._s3_credentials:
+            import json as _json
+            creds_json = _json.dumps(self._s3_credentials)
+            self._shell.env.variables["AGENTBOX_S3_CREDENTIALS"] = creds_json
+
         # Create workspace directory
         await self.memfs.mkdir_p(self.workspace)
 
         # Try to restore from storage if repo exists
         restored = False
         if self.repo_id:
-            storage = _get_storage()
+            storage = _get_storage(s3_credentials=self._s3_credentials)
             if storage and await storage.exists(self.repo_id):
                 logger.info("Restoring repo %s from storage into %s", self.repo_id, self.workspace)
                 files_pulled, errors = await pull_from_store(

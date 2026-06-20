@@ -1,0 +1,80 @@
+{
+  "family": "agentbox-orchestrator",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/agentbox-orchestrator-task-role",
+  "containerDefinitions": [
+    {
+      "name": "orchestrator",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/agentbox-orchestrator:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "AGENTBOX_REDIS_CLUSTER", "value": "true" },
+        { "name": "AGENTBOX_REDIS_TLS_SKIP_VERIFY", "value": "false" },
+        { "name": "AGENTBOX_REDIS_PREFIX", "value": "agentbox:" },
+        { "name": "AGENTBOX_JWT_ENABLED", "value": "true" },
+        { "name": "AGENTBOX_JWT_ALGORITHM", "value": "RS256" },
+        { "name": "AGENTBOX_JWT_ROLES_CLAIM", "value": "realm_access.roles" },
+        { "name": "AGENTBOX_JWT_TENANT_CLAIM", "value": "sub" },
+        { "name": "AGENTBOX_DATA_ACCESS_MODE", "value": "tenant" }
+      ],
+      "secrets": [
+        {
+          "name": "AGENTBOX_REDIS_URL",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/REDIS_URL"
+        },
+        {
+          "name": "AGENTBOX_REDIS_USERNAME",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/REDIS_USERNAME"
+        },
+        {
+          "name": "AGENTBOX_REDIS_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/REDIS_PASSWORD"
+        },
+        {
+          "name": "AGENTBOX_JWT_JWKS_URI",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/JWT_JWKS_URI"
+        },
+        {
+          "name": "AGENTBOX_JWT_ISSUER",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/JWT_ISSUER"
+        },
+        {
+          "name": "AGENTBOX_JWT_AUDIENCE",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:${AWS_ACCOUNT_ID}:secret:agentbox/JWT_AUDIENCE"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 10
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/agentbox-orchestrator",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "linuxParameters": {
+        "initProcessEnabled": true
+      }
+    }
+  ]
+}

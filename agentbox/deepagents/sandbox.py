@@ -150,12 +150,16 @@ class AgentBoxSandbox(BaseSandbox):
         *,
         box_type: str = "mem",
         repo_id: str | None = None,
+        engine: str | None = None,
         default_timeout: int = 120,
         **kwargs,
     ) -> "AgentBoxSandbox":
         """Create a new sandbox and return an AgentBoxSandbox.
 
         All HTTP happens on the persistent background loop.
+
+        Args:
+            engine: Execution engine — "pyodide" (default) or "agentcore".
         """
         async def _create():
             client = httpx.AsyncClient(
@@ -165,6 +169,8 @@ class AgentBoxSandbox(BaseSandbox):
             body: dict[str, Any] = {"box_type": box_type}
             if repo_id:
                 body["repo_id"] = repo_id
+            if engine:
+                body["engine"] = engine
             resp = await client.post("/sandboxes", json=body)
             resp.raise_for_status()
             data = resp.json()
@@ -277,24 +283,26 @@ class AgentBoxSandbox(BaseSandbox):
         file_path: str,
         content: str,
     ) -> WriteResult:
-        """Write file via ``cat`` heredoc (Tier 1).
+        """Write file via the files/write API endpoint.
 
-        Uses ``cat > <file> << 'AGENTBOX_EOF'`` to avoid quoting issues
-        with arbitrary content.  Falls back to ``edit --create`` for new files.
+        Uses the sandbox file API which handles path resolution internally,
+        avoiding issues with absolute paths on environments where /workspace
+        may not exist.
         """
-        # Pick a delimiter that doesn't appear in the content
-        delim = "AGENTBOX_EOF"
-        while delim in content:
-            delim += "_X"
+        async def _write():
+            return await self._post(
+                f"/sandboxes/{self._sandbox_id}/files/write",
+                {"path": file_path, "content": content},
+            )
 
-        # rm first so edit --create won't fail on existing files,
-        # then use cat heredoc to write (handles any content)
-        cmd = f"rm -f {_sq(file_path)} ; cat > {_sq(file_path)} << '{delim}'\n{content}\n{delim}"
-        result = self.execute(cmd)
-
-        if result.exit_code != 0:
-            return WriteResult(error=result.output.strip() or f"Failed to write '{file_path}'")
-        return WriteResult(path=file_path, files_update=None)
+        try:
+            data = _run(_write())
+            ok = data.get("written", False)
+            if not ok:
+                return WriteResult(error=f"Failed to write '{file_path}'")
+            return WriteResult(path=file_path, files_update=None)
+        except Exception as e:
+            return WriteResult(error=str(e) or f"Failed to write '{file_path}'")
 
     def edit(
         self,

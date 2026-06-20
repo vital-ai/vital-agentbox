@@ -1,26 +1,23 @@
 """AgentBox backend for Deep Agents (LangGraph BackendProtocol).
 
-Implements the sandbox backend protocol that Deep Agents use for
-code execution, file management, and environment setup.
+.. deprecated::
+    ``AgentBoxBackend`` is deprecated. Use ``AgentBoxSandbox`` instead,
+    which implements the official ``BaseSandbox`` interface::
 
-Usage::
+        from agentbox.langchain import AgentBoxSandbox
+        sandbox = AgentBoxSandbox(base_url="http://localhost:8090")
+
+Usage (legacy)::
 
     from agentbox.langchain import AgentBoxBackend
 
     backend = AgentBoxBackend(base_url="http://localhost:8090")
-
-    # Deep Agent uses the backend to:
-    #   - Execute code in a persistent sandbox
-    #   - Read/write files
-    #   - Install packages
-    #   - Run shell commands
-
-    # The backend manages sandbox lifecycle automatically.
 """
 
 from __future__ import annotations
 
 import asyncio
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -59,6 +56,12 @@ class AgentBoxBackend:
         box_type: str = "mem",
         auto_cleanup: bool = True,
     ):
+        warnings.warn(
+            "AgentBoxBackend is deprecated. Use AgentBoxSandbox instead, "
+            "which implements the official BaseSandbox interface.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.client = AgentBoxClient(base_url, token=token)
         self._box_type = box_type
         self._auto_cleanup = auto_cleanup

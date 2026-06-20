@@ -17,6 +17,7 @@ async def create_sandbox(req: CreateSandboxRequest,
             sandbox_id=req.sandbox_id,
             box_type=req.box_type,
             timeout=req.timeout,
+            engine=req.engine,
         )
         return SandboxResponse(**info)
     except RuntimeError as e:

@@ -14,6 +14,7 @@ Redis configuration (env vars):
     AGENTBOX_REDIS_PASSWORD  — Password / auth token (optional).
 """
 
+import asyncio
 import os
 import ssl as _ssl
 from contextlib import asynccontextmanager
@@ -22,7 +23,7 @@ from fastapi import FastAPI
 
 from agentbox.api.auth import JWTConfig, JWTMiddleware
 from agentbox.orchestrator.state import OrchestratorState
-from agentbox.orchestrator.routes import workers, sandboxes, admin
+from agentbox.orchestrator.routes import workers, sandboxes, admin, browsers
 
 
 REDIS_URL = os.environ.get("AGENTBOX_REDIS_URL", "redis://localhost:6379")
@@ -89,7 +90,23 @@ async def lifespan(app: FastAPI):
     """Startup/shutdown for the orchestrator."""
     app.state.redis = await _get_redis()
     app.state.orchestrator_state = OrchestratorState(app.state.redis, prefix=REDIS_PREFIX)
+
+    # Start credential expiry checker if in path_credentials mode
+    cred_task = None
+    if jwt_config.data_access_mode.value == "path_credentials":
+        from agentbox.orchestrator.credential_checker import credential_check_loop
+        cred_task = asyncio.create_task(
+            credential_check_loop(app.state.orchestrator_state)
+        )
+
     yield
+
+    if cred_task:
+        cred_task.cancel()
+        try:
+            await cred_task
+        except asyncio.CancelledError:
+            pass
     await app.state.redis.aclose()
 
 
@@ -108,6 +125,7 @@ app.add_middleware(JWTMiddleware, config=jwt_config)
 # Include routers
 app.include_router(workers.router, tags=["workers"])
 app.include_router(sandboxes.router, tags=["sandboxes"])
+app.include_router(browsers.router, tags=["browsers"])
 app.include_router(admin.router, tags=["admin"])
 
 

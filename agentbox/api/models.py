@@ -12,12 +12,15 @@ class CreateSandboxRequest(BaseModel):
     box_type: str = Field("mem", description="Sandbox type: 'mem' or 'git'.")
     repo_id: str | None = Field(None, description="Repository ID for git box (enables push/pull sync).")
     timeout: int | None = Field(None, description="Per-execution timeout override (seconds).")
+    engine: str | None = Field(None, description="Execution engine: 'pyodide' (default) or 'agentcore' (future).")
+    s3_credentials: dict | None = Field(None, description="Caller-provided S3 credentials (Mode 3: path_credentials).")
 
 
 class SandboxResponse(BaseModel):
     sandbox_id: str
     state: str
     box_type: str
+    engine: str = "pyodide"
     created_at: float
     last_used_at: float
     age_seconds: float

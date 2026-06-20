@@ -43,19 +43,26 @@ async def read_file(sandbox_id: str,
                     mgr: BoxManager = Depends(get_manager)):
     box = _get_box(sandbox_id, mgr)
     mgr._sandboxes[sandbox_id].touch()
-    if binary:
-        data = await box.memfs.read_file_binary(path)
-        if data is None:
+    if hasattr(box, 'memfs') and box.memfs is not None:
+        if binary:
+            data = await box.memfs.read_file_binary(path)
+            if data is None:
+                return FileContentResponse(path=path, content=None, exists=False)
+            return FileContentResponse(
+                path=path,
+                content=base64.b64encode(data).decode("ascii"),
+                exists=True,
+            )
+        content = await box.memfs.read_file(path)
+        if content is None:
             return FileContentResponse(path=path, content=None, exists=False)
-        return FileContentResponse(
-            path=path,
-            content=base64.b64encode(data).decode("ascii"),
-            exists=True,
-        )
-    content = await box.memfs.read_file(path)
-    if content is None:
-        return FileContentResponse(path=path, content=None, exists=False)
-    return FileContentResponse(path=path, content=content, exists=True)
+        return FileContentResponse(path=path, content=content, exists=True)
+    else:
+        # AgentCoreBox — uses engine file API
+        content = await box.read_file(path)
+        if content is None:
+            return FileContentResponse(path=path, content=None, exists=False)
+        return FileContentResponse(path=path, content=content, exists=True)
 
 
 @router.post("/write", status_code=201)
@@ -63,7 +70,10 @@ async def write_file(sandbox_id: str, req: WriteFileRequest,
                      mgr: BoxManager = Depends(get_manager)):
     box = _get_box(sandbox_id, mgr)
     mgr._sandboxes[sandbox_id].touch()
-    ok = await box.memfs.write_file(req.path, req.content)
+    if hasattr(box, 'memfs') and box.memfs is not None:
+        ok = await box.memfs.write_file(req.path, req.content)
+    else:
+        ok = await box.write_file(req.path, req.content)
     if not ok:
         raise HTTPException(status_code=500, detail="Write failed.")
     return {"path": req.path, "written": True}
