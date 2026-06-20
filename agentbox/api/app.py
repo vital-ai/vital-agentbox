@@ -42,6 +42,7 @@ WORKER_PORT = int(os.environ.get("AGENTBOX_WORKER_PORT", "8000"))
 ORCHESTRATOR_URL = os.environ.get("AGENTBOX_ORCHESTRATOR_URL")
 HEARTBEAT_INTERVAL = int(os.environ.get("AGENTBOX_HEARTBEAT_INTERVAL", "15"))
 MAX_SANDBOXES = int(os.environ.get("AGENTBOX_MAX_SANDBOXES", "50"))
+HEARTBEAT_UNHEALTHY_THRESHOLD = int(os.environ.get("AGENTBOX_HEARTBEAT_UNHEALTHY_THRESHOLD", "5"))
 
 # Worker mode: code, browser, or both
 WORKER_MODE = os.environ.get("WORKER_MODE", "code")
@@ -60,7 +61,13 @@ def _get_worker_endpoint() -> str:
 
 
 async def _register_with_orchestrator(manager=None, browser_pool=None):
-    """Self-register with orchestrator and start heartbeat loop."""
+    """Self-register with orchestrator and start heartbeat loop.
+
+    Registration is retried with backoff on startup. The heartbeat loop
+    also re-registers automatically if the orchestrator returns 404
+    (e.g. because the worker's Redis key expired or the orchestrator
+    restarted).
+    """
     if not ORCHESTRATOR_URL:
         return None
 
@@ -70,39 +77,68 @@ async def _register_with_orchestrator(manager=None, browser_pool=None):
     reg_url = f"{ORCHESTRATOR_URL}/internal/workers/register"
     hb_url = f"{ORCHESTRATOR_URL}/internal/workers/heartbeat"
 
-    # Register
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(reg_url, json={
-                "worker_id": WORKER_ID,
-                "endpoint": endpoint,
-                "type": WORKER_MODE,
-                "max_sandboxes": MAX_SANDBOXES if manager else 0,
-                "active_sandboxes": len(manager._sandboxes) if manager else 0,
-                "max_sessions": browser_pool.max_sessions if browser_pool else 0,
-                "active_sessions": browser_pool.active_count if browser_pool else 0,
-            })
-    except Exception as e:
-        print(f"[worker] Failed to register with orchestrator: {e}")
+    def _reg_payload():
+        return {
+            "worker_id": WORKER_ID,
+            "endpoint": endpoint,
+            "type": WORKER_MODE,
+            "max_sandboxes": MAX_SANDBOXES if manager else 0,
+            "active_sandboxes": len(manager._sandboxes) if manager else 0,
+            "max_sessions": browser_pool.max_sessions if browser_pool else 0,
+            "active_sessions": browser_pool.active_count if browser_pool else 0,
+        }
 
-    # Start heartbeat loop
+    async def _do_register():
+        """Send registration request. Returns True on success."""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(reg_url, json=_reg_payload())
+            resp.raise_for_status()
+        return True
+
+    # Shared failure counter — exposed via app.state for health endpoint
+    failure_count = {"value": 0}
+
+    # Initial registration with retry (orchestrator may not be ready yet)
+    registered = False
+    for attempt in range(5):
+        try:
+            await _do_register()
+            print(f"[worker] Registered with orchestrator as {WORKER_ID}")
+            registered = True
+            break
+        except Exception as e:
+            delay = min(2 ** attempt, 15)
+            print(f"[worker] Registration attempt {attempt + 1}/5 failed: {e} — retrying in {delay}s")
+            await asyncio.sleep(delay)
+
+    if not registered:
+        print(f"[worker] Initial registration failed after 5 attempts — heartbeat will keep trying")
+
+    # Start heartbeat loop (re-registers on 404)
     async def heartbeat_loop():
         while True:
             await asyncio.sleep(HEARTBEAT_INTERVAL)
             try:
                 async with httpx.AsyncClient(timeout=10.0) as client:
-                    await client.post(hb_url, json={
+                    resp = await client.post(hb_url, json={
                         "worker_id": WORKER_ID,
                         "type": WORKER_MODE,
                         "active_sandboxes": len(manager._sandboxes) if manager else 0,
                         "active_sessions": browser_pool.active_count if browser_pool else 0,
                         "state": "active",
                     })
-            except Exception:
-                pass  # Will retry next interval
+                    if resp.status_code == 404:
+                        # Worker not known to orchestrator — re-register
+                        print(f"[worker] Heartbeat got 404 — re-registering")
+                        await _do_register()
+                        print(f"[worker] Re-registered with orchestrator as {WORKER_ID}")
+                    failure_count["value"] = 0  # Success — reset counter
+            except Exception as e:
+                failure_count["value"] += 1
+                print(f"[worker] Heartbeat/registration error ({failure_count['value']}/{HEARTBEAT_UNHEALTHY_THRESHOLD}): {e}")
 
     task = asyncio.create_task(heartbeat_loop())
-    return task
+    return task, failure_count
 
 
 async def _deregister_from_orchestrator():
@@ -140,7 +176,13 @@ async def lifespan(app: FastAPI):
         set_pool(browser_pool)
 
     # Self-register with orchestrator (if configured)
-    heartbeat_task = await _register_with_orchestrator(manager, browser_pool)
+    heartbeat_task = None
+    result = await _register_with_orchestrator(manager, browser_pool)
+    if result:
+        heartbeat_task, failure_count = result
+        app.state.heartbeat_failure_count = failure_count
+    else:
+        app.state.heartbeat_failure_count = None
 
     yield
 
