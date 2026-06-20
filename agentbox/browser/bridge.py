@@ -44,7 +44,7 @@ async def _handle_http(message: dict) -> dict:
     method = message.get("method", "GET").upper()
     path = message.get("path", "")
     body = message.get("body")
-    url = f"{ORCHESTRATOR_URL}{path}"
+    url = f"{ORCHESTRATOR_URL}/internal{path}"
 
     log.info("Browser bridge HTTP: %s %s", method, url)
 
