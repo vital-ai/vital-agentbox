@@ -44,14 +44,19 @@ async def metrics(mgr: BoxManager = Depends(get_manager)):
 @router.post("/sandboxes", status_code=201)
 async def create_sandbox(req: CreateSandboxRequest,
                          mgr: BoxManager = Depends(get_manager)):
+    import functools
+    import uuid
     from agentbox.browser.bridge import browser_message_handler
 
+    # Bind the sandbox id so the bridge authenticates as this sandbox and the
+    # orchestrator can keep its browser sessions private to it.
+    sandbox_id = req.sandbox_id or str(uuid.uuid4())
     try:
         info = await mgr.create_sandbox(
-            sandbox_id=req.sandbox_id,
+            sandbox_id=sandbox_id,
             box_type=req.box_type,
             timeout=req.timeout,
-            message_handler=browser_message_handler,
+            message_handler=functools.partial(browser_message_handler, sandbox_id=sandbox_id),
             repo_id=req.repo_id,
             engine=req.engine,
             s3_credentials=req.s3_credentials,

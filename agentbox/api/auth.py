@@ -267,32 +267,70 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.claims = TokenClaims()
             return await call_next(request)
 
-        # Extract Bearer token
         auth_header = request.headers.get("Authorization", "")
         logger.debug("JWT middleware: method=%s path=%s has_auth=%s",
                      request.method, path, auth_header.startswith("Bearer "))
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(status_code=401, content={"detail": "Missing Bearer token"})
-
-        token = auth_header[7:]
-
-        # Try service token first (HS256 with service_secret) — fast path
-        if self.config.service_secret:
-            service_claims = _try_service_token(token, self.config.service_secret)
-            if service_claims:
-                request.state.claims = service_claims
-                return await call_next(request)
-
-        # Fall back to user token validation (JWKS / public key / secret)
         try:
-            claims = decode_token(token, self.config)
+            claims = authenticate_bearer(auth_header, self.config)
         except HTTPException as e:
-            logger.debug("JWT decode failed: %s", e.detail)
+            logger.debug("JWT auth failed: %s", e.detail)
             return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
         request.state.claims = claims
         logger.debug("JWT middleware: auth OK, sub=%s", claims.sub)
 
         return await call_next(request)
+
+
+class WebSocketJWTMiddleware:
+    """ASGI middleware enforcing JWT auth on WebSocket handshakes.
+
+    ``JWTMiddleware`` is a ``BaseHTTPMiddleware``, which only sees HTTP
+    requests, so without this every WebSocket route is unauthenticated.
+    Rejects the handshake (close 1008) when the Authorization header is
+    missing or invalid; otherwise exposes the claims as ``websocket.state.claims``.
+    """
+
+    def __init__(self, app, config: JWTConfig):
+        self.app = app
+        self.config = config
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "websocket":
+            return await self.app(scope, receive, send)
+
+        state = scope.setdefault("state", {})
+        if not self.config.enabled or scope.get("path") in EXEMPT_PATHS:
+            state["claims"] = TokenClaims()
+            return await self.app(scope, receive, send)
+
+        auth_header = ""
+        for name, value in scope.get("headers") or []:
+            if name == b"authorization":
+                auth_header = value.decode("latin-1")
+                break
+        try:
+            state["claims"] = authenticate_bearer(auth_header, self.config)
+        except HTTPException as e:
+            logger.info("WebSocket auth rejected for %s: %s", scope.get("path"), e.detail)
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        return await self.app(scope, receive, send)
+
+
+def authenticate_bearer(auth_header: str, config: JWTConfig) -> TokenClaims:
+    """Validate an ``Authorization: Bearer`` header value and return its claims.
+
+    Tries the HS256 service token first (fast path), then user-token validation
+    (JWKS / public key / secret). Raises HTTPException(401) when missing or invalid.
+    """
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+    token = auth_header[7:]
+    if config.service_secret:
+        service_claims = _try_service_token(token, config.service_secret)
+        if service_claims:
+            return service_claims
+    return decode_token(token, config)
 
 
 # ---------------------------------------------------------------------------

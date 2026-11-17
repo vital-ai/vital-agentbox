@@ -27,22 +27,26 @@ ORCHESTRATOR_URL = os.environ.get("AGENTBOX_ORCHESTRATOR_URL", "http://localhost
 COMMAND_TIMEOUT = float(os.environ.get("AGENTBOX_BROWSER_COMMAND_TIMEOUT", "180"))
 
 
-def _auth_headers() -> dict:
+def _auth_headers(sandbox_id: str | None = None) -> dict:
     """Mint a short-lived service JWT for bridge→orchestrator calls.
 
     The orchestrator's JWT middleware covers /internal/browsers too, so the
     bridge must authenticate like every other internal hop. The secret stays
     in the worker process; sandbox code never sees it.
+
+    The subject is ``sandbox:<id>``: the orchestrator records it as the owner
+    of sessions the sandbox creates, so one sandbox cannot drive another's.
     """
     secret = os.environ.get("AGENTBOX_SERVICE_SECRET")
     if not secret:
         return {}
     from agentbox.api.auth import mint_service_token
-    token = mint_service_token(secret, subject="browser-bridge", ttl=60)
+    subject = f"sandbox:{sandbox_id}" if sandbox_id else "browser-bridge"
+    token = mint_service_token(secret, subject=subject, ttl=60)
     return {"Authorization": f"Bearer {token}"}
 
 
-async def browser_message_handler(message: dict) -> dict:
+async def browser_message_handler(message: dict, sandbox_id: str | None = None) -> dict:
     """Handle sendMessage calls from Pyodide for browser operations.
 
     Proxies HTTP requests to the orchestrator's /browsers endpoints and
@@ -51,14 +55,14 @@ async def browser_message_handler(message: dict) -> dict:
     msg_type = message.get("type", "")
 
     if msg_type == "browser_request":
-        return await _handle_http(message)
+        return await _handle_http(message, sandbox_id)
     elif msg_type == "browser_command":
-        return await _handle_command(message)
+        return await _handle_command(message, sandbox_id)
     else:
         return {"reply": "Message received", "original": message}
 
 
-async def _handle_http(message: dict) -> dict:
+async def _handle_http(message: dict, sandbox_id: str | None = None) -> dict:
     """Proxy an HTTP request to the orchestrator's browser endpoints."""
     method = message.get("method", "GET").upper()
     path = message.get("path", "")
@@ -68,7 +72,7 @@ async def _handle_http(message: dict) -> dict:
     log.info("Browser bridge HTTP: %s %s", method, url)
 
     try:
-        headers = _auth_headers()
+        headers = _auth_headers(sandbox_id)
         async with httpx.AsyncClient(timeout=30.0) as client:
             if method == "POST":
                 resp = await client.post(url, json=body, headers=headers)
@@ -86,7 +90,7 @@ async def _handle_http(message: dict) -> dict:
         return {"status": "error", "detail": str(e)}
 
 
-async def _handle_command(message: dict) -> dict:
+async def _handle_command(message: dict, sandbox_id: str | None = None) -> dict:
     """Send a single browser command via WebSocket to the orchestrator."""
     import asyncio
     import websockets
@@ -103,7 +107,7 @@ async def _handle_command(message: dict) -> dict:
     log.info("Browser bridge WS: %s → %s", command.get("action"), ws_url)
 
     try:
-        async with websockets.connect(ws_url, additional_headers=_auth_headers() or None) as ws:
+        async with websockets.connect(ws_url, additional_headers=_auth_headers(sandbox_id) or None) as ws:
             # Consume the "connected" message
             connected = await asyncio.wait_for(ws.recv(), timeout=5)
             log.debug("WS connected: %s", connected)

@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from agentbox.api.auth import JWTConfig, JWTMiddleware
+from agentbox.api.auth import JWTConfig, JWTMiddleware, WebSocketJWTMiddleware
 from agentbox.orchestrator.state import OrchestratorState
 from agentbox.orchestrator.routes import workers, sandboxes, admin, browsers
 
@@ -122,6 +122,7 @@ app = FastAPI(
 jwt_config = JWTConfig.from_env()
 app.state.jwt_config = jwt_config
 app.add_middleware(JWTMiddleware, config=jwt_config)
+app.add_middleware(WebSocketJWTMiddleware, config=jwt_config)
 
 # Include routers
 app.include_router(workers.router, tags=["workers"])

@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from agentbox.api.deps import set_manager, clear_manager
 from agentbox.api.routes import health, sandbox, execute, files
 from agentbox.api.routes.internal import router as internal_router
-from agentbox.api.auth import JWTConfig, JWTMiddleware
+from agentbox.api.auth import JWTConfig, JWTMiddleware, WebSocketJWTMiddleware
 from agentbox.manager.box_manager import BoxManager
 
 
@@ -223,6 +223,7 @@ app = FastAPI(
 # JWT middleware (configurable via env vars)
 jwt_config = JWTConfig.from_env()
 app.add_middleware(JWTMiddleware, config=jwt_config)
+app.add_middleware(WebSocketJWTMiddleware, config=jwt_config)
 
 # Public routes (Mode 1: single worker, direct access)
 app.include_router(health.router)

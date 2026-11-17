@@ -170,8 +170,19 @@ class OrchestratorState:
         return await self._redis.get(self._key("browser_route", session_id))
 
     async def delete_browser_route(self, session_id: str) -> None:
-        """Remove a browser session route."""
-        await self._redis.delete(self._key("browser_route", session_id))
+        """Remove a browser session route and its owner record."""
+        await self._redis.delete(
+            self._key("browser_route", session_id),
+            self._key("browser_owner", session_id),
+        )
+
+    async def set_browser_owner(self, session_id: str, owner: str, ttl: int = 3600) -> None:
+        """Record the token subject that created a browser session."""
+        await self._redis.set(self._key("browser_owner", session_id), owner, ex=ttl)
+
+    async def get_browser_owner(self, session_id: str) -> Optional[str]:
+        """Token subject that created the session (None if created without auth)."""
+        return await self._redis.get(self._key("browser_owner", session_id))
 
     # ------------------------------------------------------------------
     # Sandbox Routing Table

@@ -32,6 +32,32 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+# --- Ownership ---
+# A session belongs to the token subject that created it (a user's sub, or
+# "sandbox:<id>" for sessions created through a Pyodide sandbox's bridge).
+# Only the owner or an admin can see, drive or delete it. Sessions created
+# with JWT disabled have no owner and stay open to everyone.
+
+def _is_admin(conn, claims) -> bool:
+    config = getattr(conn.app.state, "jwt_config", None)
+    admin_role = config.admin_role if config else "admin"
+    return bool(claims and admin_role in (claims.roles or []))
+
+
+async def _may_access(state: OrchestratorState, session_id: str, conn) -> bool:
+    owner = await state.get_browser_owner(session_id)
+    if owner is None:
+        return True
+    claims = getattr(conn.state, "claims", None)
+    return _is_admin(conn, claims) or (claims is not None and claims.sub == owner)
+
+
+async def _require_access(state: OrchestratorState, session_id: str, request: Request) -> None:
+    # 404 rather than 403 so session ids owned by others are not confirmed.
+    if not await _may_access(state, session_id, request):
+        raise HTTPException(status_code=404, detail=f"Browser session {session_id} not found")
+
+
 class CreateBrowserSessionRequest(BaseModel):
     browser_type: str = "chrome"
     proxy: Optional[dict] = None
@@ -79,8 +105,11 @@ async def create_browser_session(req: CreateBrowserSessionRequest, request: Requ
     result = resp.json()
     session_id = result["session_id"]
 
-    # Store route
+    # Store route and owner
     await state.set_browser_route(session_id, worker.worker_id)
+    claims = getattr(request.state, "claims", None)
+    if claims and claims.sub:
+        await state.set_browser_owner(session_id, claims.sub)
 
     return {
         "session_id": session_id,
@@ -91,8 +120,14 @@ async def create_browser_session(req: CreateBrowserSessionRequest, request: Requ
 
 @router.get("/browsers")
 async def list_browser_sessions(request: Request):
-    """List browser sessions across all workers (aggregated)."""
+    """List browser sessions across all workers (aggregated).
+
+    Admins see every session; other callers see only sessions they own
+    (plus ownerless ones created with JWT disabled).
+    """
     state: OrchestratorState = request.app.state.orchestrator_state
+    claims = getattr(request.state, "claims", None)
+    see_all = _is_admin(request, claims)
     workers = await state.list_workers(state="active")
 
     all_sessions = []
@@ -105,6 +140,8 @@ async def list_browser_sessions(request: Request):
             if resp.status_code == 200:
                 data = resp.json()
                 for s in data.get("sessions", []):
+                    if not see_all and not await _may_access(state, s.get("session_id", ""), request):
+                        continue
                     s["worker_id"] = w.worker_id
                     all_sessions.append(s)
         except Exception:
@@ -121,6 +158,7 @@ async def get_browser_session(session_id: str, request: Request):
     worker_id = await state.get_browser_route(session_id)
     if not worker_id:
         raise HTTPException(status_code=404, detail=f"Browser session {session_id} not found")
+    await _require_access(state, session_id, request)
 
     worker = await state.get_worker(worker_id)
     if not worker:
@@ -150,6 +188,7 @@ async def delete_browser_session(session_id: str, request: Request):
     worker_id = await state.get_browser_route(session_id)
     if not worker_id:
         raise HTTPException(status_code=404, detail=f"Browser session {session_id} not found")
+    await _require_access(state, session_id, request)
 
     worker = await state.get_worker(worker_id)
     if not worker:
@@ -182,7 +221,7 @@ async def browser_ws_proxy(ws: WebSocket, session_id: str):
     state: OrchestratorState = ws.app.state.orchestrator_state
 
     worker_id = await state.get_browser_route(session_id)
-    if not worker_id:
+    if not worker_id or not await _may_access(state, session_id, ws):
         await ws.close(code=1008, reason="Session not found")
         return
 
