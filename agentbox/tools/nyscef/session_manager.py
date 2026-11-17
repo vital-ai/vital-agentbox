@@ -19,6 +19,7 @@ NYSCEF_BASE = "https://iapps.courts.state.ny.us/nyscef"
 NYSCEF_SEARCH_URL = f"{NYSCEF_BASE}/CaseSearch?TAB=name"
 NYSCEF_INDEX_SEARCH_URL = f"{NYSCEF_BASE}/CaseSearch?TAB=caseIdentifier"
 NYSCEF_DOCKET_URL = f"{NYSCEF_BASE}/DocumentList"
+NYSCEF_CASE_DETAILS_URL = f"{NYSCEF_BASE}/CaseDetails"
 
 
 class NyscefSessionError(BrowserError):
@@ -126,6 +127,23 @@ class NyscefSessionManager:
             f"get_docket_page failed after {MAX_SESSION_RETRIES} session attempts: {last_err}"
         )
 
+    async def get_case_details_page(self, docket_id: str) -> str:
+        """Navigate to a case's CaseDetails page (parties, full caption) and return its HTML."""
+        last_err: Exception | None = None
+        for attempt in range(1, MAX_SESSION_RETRIES + 1):
+            try:
+                return await self._get_page_once(
+                    attempt, f"{NYSCEF_CASE_DETAILS_URL}?docketId={docket_id}", "case_details_page")
+            except NyscefSessionError as exc:
+                last_err = exc
+                log.warning("get_case_details_page attempt %d/%d failed: %s", attempt, MAX_SESSION_RETRIES, exc)
+                if attempt < MAX_SESSION_RETRIES:
+                    await self._reset_session()
+                    await asyncio.sleep(5)
+        raise NyscefSessionError(
+            f"get_case_details_page failed after {MAX_SESSION_RETRIES} session attempts: {last_err}"
+        )
+
     async def close(self):
         """Close the browser session."""
         if self._browser:
@@ -200,16 +218,18 @@ class NyscefSessionManager:
             return await b.content()
 
     async def _get_docket_page_once(self, attempt: int, docket_id: str) -> str:
+        return await self._get_page_once(
+            attempt, f"{NYSCEF_DOCKET_URL}?docketId={docket_id}&display=all", "docket_page")
+
+    async def _get_page_once(self, attempt: int, url: str, label: str) -> str:
         async with self._lock:
             await self._ensure_connected()
             b = self._browser
 
-            log.info("get_docket_page session attempt %d/%d", attempt, MAX_SESSION_RETRIES)
+            log.info("%s session attempt %d/%d", label, attempt, MAX_SESSION_RETRIES)
 
-            url = f"{NYSCEF_DOCKET_URL}?docketId={docket_id}&display=all"
             await b.goto(url)
-
-            await self._handle_challenge(b, "docket_page")
+            await self._handle_challenge(b, label)
             return await b.content()
 
     async def _handle_challenge(self, b: Browser, label: str):

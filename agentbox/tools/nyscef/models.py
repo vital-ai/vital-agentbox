@@ -34,8 +34,10 @@ class NyscefDocketEntry(BaseModel):
     filing_date: str | None = Field(default=None, description="Date filed")
     doc_index: str | None = Field(default=None, description="Document index number")
     document_type: str | None = Field(default=None, description="Document type")
-    filed_by: str | None = Field(default=None, description="Filed by (party name)")
+    filed_by: str | None = Field(default=None, description="Filed by (filer name, usually the attorney)")
     description: str | None = Field(default=None, description="Description of the filing")
+    received_date: str | None = Field(default=None, description="Date received by the court")
+    status: str | None = Field(default=None, description="Filing status (e.g. 'Processed', 'Returned For Correction')")
 
 
 class NyscefCaseDetail(BaseModel):
@@ -47,7 +49,9 @@ class NyscefCaseDetail(BaseModel):
     court: str | None = Field(default=None, description="Court name")
     judge: str | None = Field(default=None, description="Assigned judge")
     filing_date: str | None = Field(default=None, description="Filing date")
-    caption: str | None = Field(default=None, description="Full case caption")
+    caption: str | None = Field(default=None, description="Short case caption")
+    full_caption: str | None = Field(default=None, description="Full caption with every party (Case Detail page)")
+    efiling_status: str | None = Field(default=None, description="E-filing status")
     parties: list[NyscefParty] = Field(default_factory=list, description="Parties in the case")
     docket_entries: list[NyscefDocketEntry] = Field(default_factory=list, description="Docket entries (filings)")
 

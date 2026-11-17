@@ -3,7 +3,8 @@ NYSCEF Case Detail Tool — get detailed information for a specific NYSCEF case
 by its docket ID, including parties and docket entries (filings).
 
 Uses the agentbox Browser client to navigate NYSCEF, handle
-Cloudflare/hCaptcha challenges, and parse the docket page.
+Cloudflare/hCaptcha challenges, and parse the CaseDetails page (parties)
+and the docket page (filings).
 
 """
 
@@ -48,11 +49,15 @@ class NyscefCaseDetailTool(AbstractTool):
         ) -> NyscefCaseDetailOutput:
             """Get detailed information for a specific NYSCEF case by docket ID."""
             try:
-                html = await session.get_docket_page(docket_id)
-                case = parse_case_detail(html, docket_id=docket_id)
-
-                if not include_filings:
-                    case.docket_entries = []
+                # Parties and the full caption are only on CaseDetails;
+                # filings are only on the docket (DocumentList) page.
+                details_html = await session.get_case_details_page(docket_id)
+                if include_filings:
+                    docket_html = await session.get_docket_page(docket_id)
+                    case = parse_case_detail(docket_html, docket_id=docket_id,
+                                             case_details_html=details_html)
+                else:
+                    case = parse_case_detail(details_html, docket_id=docket_id)
 
                 return NyscefCaseDetailOutput(
                     tool="nyscef_case_detail_tool",

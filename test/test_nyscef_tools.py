@@ -55,25 +55,145 @@ SEARCH_RESULTS_HTML = """
 </body></html>
 """
 
-DOCKET_PAGE_HTML = """
-<html><body>
-<h1>100234/2024-New York County Supreme Court-Commercial</h1>
-<span class="captionText">Smith v. Jones</span>
-<table>
-  <tr><td class="fieldLabel">Justice/Judge</td><td>Hon. Jane Doe</td></tr>
-  <tr><td class="fieldLabel">Disposition/Status</td><td>Active</td></tr>
-  <tr><td class="fieldLabel">Date Filed</td><td>01/15/2024</td></tr>
-</table>
+# Docket (DocumentList) and CaseDetails pages: markup copied from live NYSCEF pages
+# (2026-11), names invented.
+
+_PAGE_HEADER = """
+<div class="headingContainer">
+<h1 class="PageHeading">
+<a class="skipTo" id="content">{index}</a> - <span class="PageHeadingDesc">Kings County Supreme Court</span>
+</h1>
+</div>
+<div class="row">
+<span style="vertical-align:top">Short Caption: </span>
+<span class="captionText">ACME FUNDING LLC v. WIDGET WORKS LLC et al</span>
+</div>
+<span class="row"><span>Case Type: <strong>Other Matters - Contract - Other</strong></span></span>
+<span class="row"><span>Case Status: <strong>Pre-RJI</strong></span></span>
+<span class="row"><span>eFiling Status:     <strong><a style="cursor:help" title="One or more parties have not recorded their participation in e-filing.">Partial Participation Recorded</a></strong> </span></span>
+"""
+
+DOCKET_PAGE_HTML = "<html><body><main>" + _PAGE_HEADER.format(index="123456-2021") + """
 <table class="NewSearchResults">
-  <tr><th>#</th><th>Document</th><th>Filed By</th><th>Status</th></tr>
-  <tr>
-    <td>1</td><td>Summons and complaint</td><td>Plaintiff</td><td>Filed</td>
-  </tr>
-  <tr>
-    <td>2</td><td>Motion to dismiss</td><td>Defendant</td><td>Filed</td>
-  </tr>
+<tr>
+<th scope="col" style="width:3em">#</th>
+<th scope="col">Document</th>
+<th scope="col" style="width:13em">Filed By</th>
+<th scope="col" style="width:11em">Status</th>
+</tr>
+<tr>
+<td style="font-size:.9;padding-right:0">
+              1
+        </td>
+<td>
+<a aria-label=" SUMMONS + COMPLAINT, page opens in new tab" href="ViewDocument?docIndex=aaa==" target="_blank">SUMMONS + COMPLAINT</a>
+</td>
+<td>
+                DOE, JANE
+              <br/>Filed: 04/27/2021
+            <br/><span class="grayItalic">
+                Received: 04/28/2021
+            </span>
+</td>
+<td>
+<span class="green"><strong>Processed</strong></span>
+<br/>
+<a aria-label="confirmation notice, page opens in new tab" href="ConfirmationNotice?docId=aaa==" target="_blank">Confirmation Notice</a>
+<br/>
+</td>
+</tr>
+<tr class="changeColor">
+<td style="font-size:.9;padding-right:0">
+              2
+        </td>
+<td>
+<a aria-label=" EXHIBIT(S), page opens in new tab" href="ViewDocument?docIndex=bbb==" target="_blank">EXHIBIT(S)</a> - A <br/><span class="italic">MERCHANT AGREEMENT </span> <br/><span class="blueItalicBold">Redacted</span> <span class="italic">per 22 NYCRR \u00a7202.5(e) </span>
+</td>
+<td>
+                DOE, JANE
+              <br/>Filed: 04/27/2021
+            <br/><span class="grayItalic">
+                Received: 04/27/2021
+            </span>
+</td>
+<td>
+<span class="green"><strong>Processed</strong></span>
+<br/>
+</td>
+</tr>
+<tr>
+<td style="font-size:.9;padding-right:0">
+              3
+        </td>
+<td>
+                JUDGMENT - CLERK DEFAULT (PROPOSED)
+        </td>
+<td>
+</td>
+<td>
+<span class="red"><strong>Returned For Correction</strong></span>
+</td>
+</tr>
 </table>
-</body></html>
+</main></body></html>
+"""
+
+CASE_DETAILS_HTML = "<html><body><main>" + _PAGE_HEADER.format(index="123456-2021") + """
+<span class="DataRow">
+<strong>Full Caption</strong>
+<br/>Acme Funding Llc v. Widget Works Llc, Widget Works, John Q Public
+    </span>
+<div class="tableHeading">
+        Plaintiffs/Petitioners
+    </div>
+<table class="NewSearchResults" style="width:54em;" summary="Petitioners in this case">
+<thead>
+<tr>
+<th scope="col">Name</th>
+<th scope="col" style="width:50%">Represented By</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+                 ACME FUNDING LLC
+        </td>
+<td style="line-height:1.5em">
+                    DOE, JANE on 04/27/2021
+                    <br/>Doe &amp; Roe, PLLC
+        </td>
+</tr>
+</tbody>
+</table>
+<div class="tableHeading">Defendants/Respondents</div>
+<table class="NewSearchResults" style="width:54em;" summary="Respondents in this case">
+<thead>
+<tr>
+<th scope="col">Name</th>
+<th scope="col" style="width:50%">Represented By</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+                 WIDGET WORKS LLC
+            DBA WIDGETS
+        </td>
+<td style="line-height:1.5em">
+<span class="redItalic">none recorded</span>
+</td>
+</tr>
+<tr class="changeColor">
+<td>
+                 John Q Public
+        </td>
+<td style="line-height:1.5em">
+<span class="redItalic">none recorded</span>
+</td>
+</tr>
+</tbody>
+</table>
+</main></body></html>
 """
 
 
@@ -184,28 +304,63 @@ class TestParseResultCount:
 # --- Parse Case Detail ---
 
 class TestParseCaseDetail:
-    def test_parse_case_detail(self):
+    def test_header_fields(self):
         detail = parse_case_detail(DOCKET_PAGE_HTML, docket_id="abc123")
         assert detail.docket_id == "abc123"
-        assert detail.index_number == "100234/2024"
-        assert detail.case_type == "Commercial"
-        assert detail.court == "New York County Supreme Court"
-        assert detail.judge == "Hon. Jane Doe"
-        assert detail.case_status == "Active"
-        assert detail.filing_date == "01/15/2024"
-        assert detail.caption == "Smith v. Jones"
+        # Hyphenated index numbers stay whole; the court is split off at " - ".
+        assert detail.index_number == "123456-2021"
+        assert detail.court == "Kings County Supreme Court"
+        assert detail.case_type == "Other Matters - Contract - Other"
+        assert detail.case_status == "Pre-RJI"
+        assert detail.efiling_status == "Partial Participation Recorded"
+        assert detail.caption == "ACME FUNDING LLC v. WIDGET WORKS LLC et al"
+        # Neither page shows a case filing date (the search summary has it).
+        assert detail.filing_date is None
+        assert detail.judge is None
 
-        assert len(detail.docket_entries) == 2
-        e0 = detail.docket_entries[0]
+    def test_docket_entries(self):
+        entries = parse_case_detail(DOCKET_PAGE_HTML).docket_entries
+        assert len(entries) == 3
+        e0, e1, e2 = entries
         assert e0.doc_index == "1"
-        assert e0.description == "Summons and complaint"
-        assert e0.filed_by == "Plaintiff"
-        assert e0.document_type == "Filed"
+        assert e0.document_type == "SUMMONS + COMPLAINT"
+        assert e0.description == "SUMMONS + COMPLAINT"
+        assert e0.filed_by == "DOE, JANE"
+        assert e0.filing_date == "04/27/2021"
+        assert e0.received_date == "04/28/2021"
+        assert e0.status == "Processed"
+        assert e1.document_type == "EXHIBIT(S)"
+        assert e1.description == "EXHIBIT(S) - A MERCHANT AGREEMENT Redacted per 22 NYCRR \u00a7202.5(e)"
+        # Unlinked document, filing returned for correction: no filer or dates.
+        assert e2.document_type == "JUDGMENT - CLERK DEFAULT (PROPOSED)"
+        assert e2.filed_by is None and e2.filing_date is None
+        assert e2.status == "Returned For Correction"
+
+    def test_docket_page_has_no_parties(self):
+        assert parse_case_detail(DOCKET_PAGE_HTML).parties == []
+
+    def test_parties_from_case_details(self):
+        detail = parse_case_detail(DOCKET_PAGE_HTML, docket_id="abc123",
+                                   case_details_html=CASE_DETAILS_HTML)
+        assert [(p.name, p.role, p.attorney) for p in detail.parties] == [
+            ("ACME FUNDING LLC", "Plaintiffs/Petitioners", "DOE, JANE on 04/27/2021; Doe & Roe, PLLC"),
+            ("WIDGET WORKS LLC DBA WIDGETS", "Defendants/Respondents", None),
+            ("John Q Public", "Defendants/Respondents", None),
+        ]
+        assert detail.full_caption == "Acme Funding Llc v. Widget Works Llc, Widget Works, John Q Public"
+        assert len(detail.docket_entries) == 3
+
+    def test_case_details_page_alone(self):
+        detail = parse_case_detail(CASE_DETAILS_HTML, docket_id="abc123")
+        assert detail.index_number == "123456-2021"
+        assert len(detail.parties) == 3
+        assert detail.docket_entries == []
 
     def test_parse_case_detail_empty(self):
         detail = parse_case_detail("<html><body></body></html>", docket_id="missing")
         assert detail.docket_id == "missing"
         assert detail.index_number is None
+        assert detail.parties == []
         assert detail.docket_entries == []
 
 
