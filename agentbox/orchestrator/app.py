@@ -115,6 +115,7 @@ app = FastAPI(
     description="Sandbox routing, worker management, and admin API",
     version="0.1.0",
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 # JWT middleware (configurable via env vars)

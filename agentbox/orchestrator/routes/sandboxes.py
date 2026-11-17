@@ -188,12 +188,20 @@ async def create_sandbox(req: CreateSandboxRequest, request: Request):
     if req.s3_credentials:
         body["s3_credentials"] = req.s3_credentials.model_dump(exclude_none=True)
 
+    import os
     import httpx
+    headers = {}
+    service_secret = os.environ.get("AGENTBOX_SERVICE_SECRET")
+    if service_secret:
+        from agentbox.api.auth import mint_service_token
+        token = mint_service_token(service_secret, subject="orchestrator", ttl=60)
+        headers["Authorization"] = f"Bearer {token}"
     async with httpx.AsyncClient(timeout=120.0) as client:
         try:
             resp = await client.post(
                 f"{worker.endpoint}/internal/sandboxes",
                 json=body,
+                headers=headers,
             )
         except (httpx.ConnectError, httpx.TimeoutException) as e:
             raise HTTPException(status_code=502, detail=f"Worker {worker.worker_id} unreachable: {e}")

@@ -217,6 +217,7 @@ app = FastAPI(
     description="Secure sandboxed code execution for AI agents",
     version="0.0.3",
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 # JWT middleware (configurable via env vars)

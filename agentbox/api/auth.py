@@ -269,6 +269,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         # Extract Bearer token
         auth_header = request.headers.get("Authorization", "")
+        logger.debug("JWT middleware: method=%s path=%s has_auth=%s",
+                     request.method, path, auth_header.startswith("Bearer "))
         if not auth_header.startswith("Bearer "):
             return JSONResponse(status_code=401, content={"detail": "Missing Bearer token"})
 
@@ -285,8 +287,10 @@ class JWTMiddleware(BaseHTTPMiddleware):
         try:
             claims = decode_token(token, self.config)
         except HTTPException as e:
+            logger.debug("JWT decode failed: %s", e.detail)
             return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
         request.state.claims = claims
+        logger.debug("JWT middleware: auth OK, sub=%s", claims.sub)
 
         return await call_next(request)
 

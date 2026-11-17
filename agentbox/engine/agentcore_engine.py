@@ -202,7 +202,6 @@ class AgentCoreEngine:
         """Write a file to the AgentCore MicroVM filesystem."""
         self._ensure_started()
         try:
-            # Ensure parent directory exists using the SDK-relative path
             sdk_path = _sdk_path(path)
             parent = "/".join(sdk_path.split("/")[:-1])
             if parent:

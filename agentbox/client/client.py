@@ -344,8 +344,26 @@ class AgentBoxClient:
         repo_id: Optional[str] = None,
         timeout: Optional[int] = None,
         metadata: Optional[dict] = None,
+        engine: Optional[str] = None,
+        data_path: Optional[str] = None,
+        s3_credentials: Optional[dict] = None,
+        credential_webhook_url: Optional[str] = None,
+        webhook_secret: Optional[str] = None,
     ) -> Sandbox:
-        """Create a new sandbox and return a Sandbox handle."""
+        """Create a new sandbox and return a Sandbox handle.
+
+        Args:
+            box_type: Sandbox type ("mem", "git").
+            repo_id: Repository ID for git storage (Mode 1: tenant-scoped).
+            timeout: Session timeout in seconds.
+            metadata: Arbitrary metadata dict.
+            engine: Execution engine ("pyodide" or "agentcore").
+            data_path: S3 data path (Mode 2/3: caller-provided).
+            s3_credentials: STS credentials dict for Mode 3
+                (keys: access_key_id, secret_access_key, session_token, expiration).
+            credential_webhook_url: Webhook URL for credential refresh (Mode 3).
+            webhook_secret: HMAC secret for webhook signatures (Mode 3).
+        """
         body: dict[str, Any] = {"box_type": box_type}
         if repo_id:
             body["repo_id"] = repo_id
@@ -353,6 +371,16 @@ class AgentBoxClient:
             body["timeout"] = timeout
         if metadata:
             body["metadata"] = metadata
+        if engine:
+            body["engine"] = engine
+        if data_path:
+            body["data_path"] = data_path
+        if s3_credentials:
+            body["s3_credentials"] = s3_credentials
+        if credential_webhook_url:
+            body["credential_webhook_url"] = credential_webhook_url
+        if webhook_secret:
+            body["webhook_secret"] = webhook_secret
         data = await self._post("/sandboxes", body)
         sandbox_id = data.get("sandbox_id", data.get("id", ""))
         return Sandbox(self, sandbox_id, info=data)
@@ -374,14 +402,17 @@ class AgentBoxClient:
     # --- Convenience: one-shot execution ---
 
     async def run(self, code: str, *, language: str = "python",
-                  box_type: str = "mem") -> ExecuteResult:
+                  box_type: str = "mem", engine: Optional[str] = None,
+                  data_path: Optional[str] = None) -> ExecuteResult:
         """Create a sandbox, run code, destroy it, return the result.
 
         Convenient for one-shot executions::
 
             result = await client.run("print(2+2)")
         """
-        sandbox = await self.create_sandbox(box_type=box_type)
+        sandbox = await self.create_sandbox(
+            box_type=box_type, engine=engine, data_path=data_path,
+        )
         try:
             return await sandbox.execute(code, language=language)
         finally:

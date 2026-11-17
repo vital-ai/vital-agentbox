@@ -11,7 +11,16 @@ Usage::
 
     from agentbox.langchain import AgentBoxSandbox
 
-    sandbox = AgentBoxSandbox(base_url="http://localhost:8090")
+    # Lazy creation (sandbox created on first execute/read/write):
+    sandbox = AgentBoxSandbox(base_url="http://localhost:8090", token="...")
+
+    # Eager creation via classmethod:
+    sandbox = AgentBoxSandbox.create(
+        "http://localhost:8090",
+        token="...",
+        data_path="harper/sandbox",
+        engine="agentcore",
+    )
 
     # Use directly:
     result = sandbox.execute("echo hello")
@@ -24,6 +33,9 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
+import re
+import shlex
 import uuid
 import logging
 from typing import Optional
@@ -38,10 +50,46 @@ from deepagents.backends.protocol import (
     WriteResult,
     EditResult,
     FileInfo,
+    FileData,
+    ReadResult,
+    LsResult,
+    GlobResult,
+    GrepResult,
+    GrepMatch,
 )
 
 
 logger = logging.getLogger(__name__)
+
+
+def _glob_regex(pattern: str) -> "re.Pattern[str]":
+    """Translate a glob (``**``, ``*``, ``?``, ``[...]``) to a full-match regex."""
+    out: list[str] = []
+    i, n = 0, len(pattern)
+    while i < n:
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        elif pattern[i] == "[" and "]" in pattern[i + 2:]:
+            j = pattern.index("]", i + 2)
+            body = pattern[i + 1:j]
+            if body.startswith("!"):
+                body = "^" + body[1:]
+            out.append("[" + body.replace("\\", "\\\\") + "]")
+            i = j + 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
 
 
 class AgentBoxSandbox(BaseSandbox):
@@ -53,8 +101,11 @@ class AgentBoxSandbox(BaseSandbox):
     Args:
         base_url: AgentBox orchestrator URL.
         token: Optional JWT token for authentication.
+        headers: Optional extra headers for every request.
         box_type: Sandbox type (``'mem'``, ``'git'``, or ``'file'``).
         repo_id: Optional persist_id / repo_id for persistent storage.
+        engine: Execution engine (``'pyodide'`` or ``'agentcore'``).
+        data_path: S3 data path (required for Mode 2/3).
         timeout: HTTP request timeout in seconds.
         auto_cleanup: Destroy sandbox on ``close()``.
     """
@@ -64,25 +115,63 @@ class AgentBoxSandbox(BaseSandbox):
         base_url: str = "http://localhost:8090",
         *,
         token: Optional[str] = None,
+        headers: Optional[dict[str, str]] = None,
         box_type: str = "mem",
         repo_id: Optional[str] = None,
+        engine: Optional[str] = None,
+        data_path: Optional[str] = None,
         timeout: float = 60.0,
         auto_cleanup: bool = True,
     ):
         self._base_url = base_url.rstrip("/")
         self._box_type = box_type
         self._repo_id = repo_id
+        self._engine = engine
+        self._data_path = data_path
         self._auto_cleanup = auto_cleanup
         self._sandbox_id: Optional[str] = None
 
-        headers = {}
+        _headers: dict[str, str] = headers.copy() if headers else {}
         if token:
-            headers["Authorization"] = f"Bearer {token}"
+            _headers["Authorization"] = f"Bearer {token}"
         self._http = httpx.Client(
             base_url=self._base_url,
             timeout=timeout,
-            headers=headers,
+            headers=_headers,
         )
+
+    @classmethod
+    def create(
+        cls,
+        base_url: str = "http://localhost:8090",
+        *,
+        token: Optional[str] = None,
+        headers: Optional[dict[str, str]] = None,
+        box_type: str = "mem",
+        repo_id: Optional[str] = None,
+        engine: Optional[str] = None,
+        data_path: Optional[str] = None,
+        timeout: float = 60.0,
+        auto_cleanup: bool = True,
+    ) -> "AgentBoxSandbox":
+        """Create a sandbox immediately and return the handle.
+
+        Convenience classmethod that triggers sandbox creation up front
+        instead of lazily on first ``execute()``.
+        """
+        instance = cls(
+            base_url,
+            token=token,
+            headers=headers,
+            box_type=box_type,
+            repo_id=repo_id,
+            engine=engine,
+            data_path=data_path,
+            timeout=timeout,
+            auto_cleanup=auto_cleanup,
+        )
+        instance._ensure_sandbox()
+        return instance
 
     # ------------------------------------------------------------------
     # BaseSandbox required: id property
@@ -109,6 +198,7 @@ class AgentBoxSandbox(BaseSandbox):
 
         For the Pyodide engine, inherited file methods are overridden below
         to use the REST API directly (since ``python3`` is not available).
+
         """
         self._ensure_sandbox()
         body: dict = {"code": command, "language": "shell"}
@@ -138,6 +228,7 @@ class AgentBoxSandbox(BaseSandbox):
         self._ensure_sandbox()
         results = []
         for path, content in files:
+            path = self._normalize_path(path)
             try:
                 # Auto-create parent directory
                 parent = "/".join(path.split("/")[:-1])
@@ -165,6 +256,7 @@ class AgentBoxSandbox(BaseSandbox):
         self._ensure_sandbox()
         results = []
         for path in paths:
+            path = self._normalize_path(path)
             try:
                 data = self._get(
                     f"/sandboxes/{self._sandbox_id}/files/read",
@@ -201,6 +293,7 @@ class AgentBoxSandbox(BaseSandbox):
         ``execute('python3 -c "..."')`` — not available in Pyodide engine.
         """
         self._ensure_sandbox()
+        file_path = self._normalize_path(file_path)
         data = self._get(
             f"/sandboxes/{self._sandbox_id}/files/read",
             params={"path": file_path},
@@ -216,6 +309,7 @@ class AgentBoxSandbox(BaseSandbox):
     def write(self, file_path: str, content: str) -> WriteResult:
         """Write a file via AgentBox REST API."""
         self._ensure_sandbox()
+        file_path = self._normalize_path(file_path)
         # Auto-create parent directory
         parent = "/".join(file_path.split("/")[:-1])
         if parent:
@@ -241,6 +335,7 @@ class AgentBoxSandbox(BaseSandbox):
     ) -> EditResult:
         """Edit a file via read-modify-write through the REST API."""
         self._ensure_sandbox()
+        file_path = self._normalize_path(file_path)
         # Read current content
         data = self._get(
             f"/sandboxes/{self._sandbox_id}/files/read",
@@ -268,6 +363,7 @@ class AgentBoxSandbox(BaseSandbox):
     def ls_info(self, path: str) -> list[FileInfo]:
         """List directory contents via AgentBox REST API."""
         self._ensure_sandbox()
+        path = self._normalize_path(path)
         data = self._get(
             f"/sandboxes/{self._sandbox_id}/files",
             params={"path": path},
@@ -286,6 +382,114 @@ class AgentBoxSandbox(BaseSandbox):
                     size=e.get("size", 0),
                 ))
         return result
+
+    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+        """Glob files via shell ``find`` — avoids base64-encoded python3 scripts.
+
+        ``find -name`` matches basenames only, so ``**/*.py`` or ``src/*.py``
+        would never match; instead list files under the search path and match
+        the pattern against each path relative to it, with ``glob.glob``
+        recursive semantics (``**`` spans directories, ``*`` does not).
+        """
+        search = self._normalize_path(path or ".")
+        result = self.execute(f"find {shlex.quote(search)} -type f 2>/dev/null")
+        if result.exit_code != 0:
+            return GlobResult(error="glob_failed", matches=[])
+        regex = _glob_regex(pattern)
+        prefix = search.rstrip("/") + "/"
+        matches: list[FileInfo] = []
+        for line in result.output.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            rel = line[len(prefix):] if line.startswith(prefix) else line
+            if regex.match(rel):
+                matches.append(FileInfo(path=line, is_dir=False))
+        return GlobResult(error=None, matches=matches)
+
+    def grep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        """Grep via shell ``grep -rHnF`` — avoids base64-encoded python3 scripts."""
+        search = self._normalize_path(path or ".")
+        cmd = f"grep -rHnFZ {shlex.quote(pattern)}"
+        if glob:
+            cmd += f" --include={shlex.quote(glob)}"
+        cmd += f" {shlex.quote(search)} 2>/dev/null || true"
+        result = self.execute(cmd)
+        matches: list[GrepMatch] = []
+        for line in result.output.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # grep -HnZ output: file\0line_no:text
+            if "\x00" in line:
+                file_part, rest = line.split("\x00", 1)
+                if ":" in rest:
+                    line_no_str, text = rest.split(":", 1)
+                    try:
+                        matches.append(GrepMatch(
+                            path=file_part, line=int(line_no_str), text=text,
+                        ))
+                    except ValueError:
+                        pass
+            elif ":" in line:
+                # Fallback: file:line_no:text
+                parts = line.split(":", 2)
+                if len(parts) >= 3:
+                    try:
+                        matches.append(GrepMatch(
+                            path=parts[0], line=int(parts[1]), text=parts[2],
+                        ))
+                    except ValueError:
+                        pass
+        return GrepResult(error=None, matches=matches)
+
+    # ------------------------------------------------------------------
+    # Async overrides — delegate to sync methods (which use REST API
+    # with _normalize_path) instead of inherited aexecute-based
+    # implementations that generate base64 python3 scripts.
+    # ------------------------------------------------------------------
+
+    async def aread(
+        self, file_path: str, offset: int = 0, limit: int = 2000,
+    ) -> ReadResult:
+        content = await asyncio.to_thread(self.read, file_path, offset, limit)
+        if isinstance(content, str) and content.startswith("Error:"):
+            return ReadResult(error=content)
+        return ReadResult(file_data=FileData(content=content, encoding="utf-8"))
+
+    async def awrite(self, file_path: str, content: str) -> WriteResult:
+        return await asyncio.to_thread(self.write, file_path, content)
+
+    async def aedit(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> EditResult:
+        return await asyncio.to_thread(
+            self.edit, file_path, old_string, new_string, replace_all,
+        )
+
+    async def als(self, path: str) -> LsResult:
+        entries = await asyncio.to_thread(self.ls_info, path)
+        return LsResult(error=None, entries=entries)
+
+    async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
+        return await asyncio.to_thread(self.glob, pattern, path)
+
+    async def agrep(
+        self,
+        pattern: str,
+        path: str | None = None,
+        glob: str | None = None,
+    ) -> GrepResult:
+        return await asyncio.to_thread(self.grep, pattern, path, glob)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -320,6 +524,23 @@ class AgentBoxSandbox(BaseSandbox):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _normalize_path(self, path: str) -> str:
+        """On AgentCore, strip leading ``/`` so paths are relative to the sandbox cwd.
+
+        The AgentCore MicroVM root filesystem is read-only.  All file
+        API paths are resolved relative to the writable cwd
+        (``/opt/amazon/genesis1p-tools/var``).  Stripping the leading
+        slash ensures ``/report.txt`` → ``report.txt`` → written to
+        ``{cwd}/report.txt``; the root itself (``/``) maps to ``.``.
+
+        Other engines keep absolute paths: the Pyodide file API resolves
+        relative paths against the Emscripten cwd, not the shell's
+        ``/workspace``, so stripping would misplace files there.
+        """
+        if self._engine != "agentcore":
+            return path
+        return path.lstrip("/") or "."
+
     def _ensure_sandbox(self) -> None:
         """Lazily create the sandbox on first use."""
         if self._sandbox_id is not None:
@@ -327,6 +548,10 @@ class AgentBoxSandbox(BaseSandbox):
         body: dict = {"box_type": self._box_type}
         if self._repo_id:
             body["repo_id"] = self._repo_id
+        if self._engine:
+            body["engine"] = self._engine
+        if self._data_path:
+            body["data_path"] = self._data_path
         data = self._post("/sandboxes", body)
         self._sandbox_id = data.get("sandbox_id", data.get("id", ""))
         logger.info("Created sandbox %s (box_type=%s)", self._sandbox_id, self._box_type)

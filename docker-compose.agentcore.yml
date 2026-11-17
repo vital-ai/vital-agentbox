@@ -1,0 +1,108 @@
+# AgentCore + Browser Workers + Orchestrator — Data Access Mode 2 (path)
+#
+# This compose runs the orchestrator with AgentCore-backed code execution
+# (real MicroVMs via AWS Bedrock) and dedicated browser workers, using
+# Mode 2 (caller-supplied data_path, worker IAM creds for S3).
+#
+# Prerequisites:
+#   1. AWS credentials — either:
+#      a. ~/.aws/credentials with a profile that has Bedrock AgentCore access, OR
+#      b. Set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in .env.agentcore
+#   2. Redis — running on host (e.g. docker run -d -p 6381:6379 redis:7-alpine)
+#   3. .env.agentcore — create from the template below
+#
+# Create .env.agentcore:
+#   AGENTBOX_SERVICE_SECRET=<generate with: python -c "import secrets; print(secrets.token_urlsafe(32))">
+#   AWS_ACCESS_KEY_ID=<your-key>
+#   AWS_SECRET_ACCESS_KEY=<your-secret>
+#   AWS_DEFAULT_REGION=us-east-1
+#
+# Usage:
+#   docker-compose -f docker-compose.agentcore.yml up --build
+#   curl http://localhost:8090/health
+#
+# Service ports:
+#   Orchestrator:    http://localhost:8090
+#   Code Worker:     http://localhost:8093 (AgentCore engine)
+#   Browser Worker:  http://localhost:8070
+
+services:
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    ports:
+      - "8090:8000"
+    env_file: .env.agentcore
+    environment:
+      # Redis (standalone, host machine)
+      AGENTBOX_REDIS_URL: "redis://host.docker.internal:6381"
+
+      # Data access Mode 2: caller provides data_path, worker uses IAM for S3
+      AGENTBOX_DATA_ACCESS_MODE: "path"
+
+      # JWT auth — enforced on all routes
+      AGENTBOX_JWT_ENABLED: "true"
+      AGENTBOX_JWT_ALGORITHM: "HS256"
+      # In Mode 2 without an external IdP, we use the service secret as the
+      # JWT shared secret so callers can mint their own tokens for testing.
+      # In production, replace with JWKS_URI pointing to Keycloak/Auth0.
+      # AGENTBOX_JWT_JWKS_URI: "https://keycloak.example.com/realms/myrealm/protocol/openid-connect/certs"
+      # AGENTBOX_JWT_ISSUER: "https://keycloak.example.com/realms/myrealm"
+      # AGENTBOX_JWT_AUDIENCE: "agentbox"
+
+  code-worker:
+    image: agentbox-worker-ac
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    shm_size: 2g
+    ports:
+      - "8093:8000"
+    env_file: .env.agentcore
+    environment:
+      WORKER_MODE: "code"
+      AGENTBOX_ORCHESTRATOR_URL: "http://orchestrator:8000"
+      AGENTBOX_WORKER_ID: "code-worker-1"
+      AGENTBOX_WORKER_HOST: "code-worker"
+      AGENTBOX_MAX_SANDBOXES: "10"
+
+      # AgentCore engine (default for this stack)
+      AGENTBOX_ENGINE: "agentcore"
+      AGENTBOX_AGENTCORE_REGION: "us-east-1"
+      AGENTBOX_AGENTCORE_SESSION_TIMEOUT: "1800"
+      # VPC interpreter (if provisioned); comment out to use default
+      # AGENTBOX_AGENTCORE_INTERPRETER_ID: "agentboxVpcInterpreter-lJ5tnJr1DJ"
+
+      # JWT auth
+      AGENTBOX_JWT_ENABLED: "true"
+      AGENTBOX_JWT_ALGORITHM: "HS256"
+
+      # Git storage via S3 (using AWS IAM creds from .env.agentcore)
+      AGENTBOX_GIT_STORE: "s3"
+      AGENTBOX_GIT_S3_BUCKET: "cardiff-agent-storage"
+      AGENTBOX_GIT_S3_REGION: "us-east-1"
+    depends_on:
+      - orchestrator
+
+  browser-worker:
+    image: agentbox-worker-ac
+    shm_size: 2g
+    ports:
+      - "8070:8000"
+    env_file: .env.agentcore
+    environment:
+      WORKER_MODE: "browser"
+      AGENTBOX_ORCHESTRATOR_URL: "http://orchestrator:8000"
+      AGENTBOX_WORKER_ID: "browser-worker-1"
+      AGENTBOX_WORKER_HOST: "browser-worker"
+      MAX_SESSIONS: "3"
+      SESSION_IDLE_TIMEOUT: "300"
+      DISPLAY: ":99"
+
+      # JWT auth
+      AGENTBOX_JWT_ENABLED: "true"
+      AGENTBOX_JWT_ALGORITHM: "HS256"
+    depends_on:
+      - orchestrator

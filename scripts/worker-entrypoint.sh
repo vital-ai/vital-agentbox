@@ -9,6 +9,7 @@ echo ""
 
 # Start Xvfb (required for Camoufox which runs in non-headless mode)
 echo "=== Starting Xvfb ==="
+rm -f /tmp/.X99-lock
 Xvfb :99 -screen 0 1280x720x24 -nolisten tcp &
 XVFB_PID=$!
 sleep 2
