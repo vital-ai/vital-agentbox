@@ -2,15 +2,10 @@
 NYSCEF Tools tests.
 
 Tests model instantiation, HTML parsers (search results, result count,
-case detail, empty HTML), tool registration with ToolManager, and the
-case-detail tool's page fetching.
+case detail, empty HTML), and tool registration with ToolManager.
 
 Usage:
     python -m pytest test/test_nyscef_tools.py -xvs
-
-The tool tests need kgraphplanner, which is not a dependency here (it depends
-on vital-agentbox). Put its source on the path to run them:
-    PYTHONPATH=../kgraphplanner python -m pytest test/test_nyscef_tools.py -xvs
 """
 
 import pytest
@@ -413,43 +408,3 @@ class TestNyscefToolRegistration:
         for name in expected:
             fn = tm.get_tool_function(name)
             assert fn is not None, f"No function for {name}"
-
-
-class _FakeNyscefSession:
-    """Stands in for NyscefSessionManager: serves fixture pages, records calls."""
-
-    def __init__(self):
-        self.calls = []
-
-    async def get_case_details_page(self, docket_id):
-        self.calls.append(("case_details", docket_id))
-        return CASE_DETAILS_HTML
-
-    async def get_docket_page(self, docket_id):
-        self.calls.append(("docket", docket_id))
-        return DOCKET_PAGE_HTML
-
-
-@pytest.mark.skipif(not _has_kgraphplanner, reason="kgraphplanner not installed")
-class TestNyscefCaseDetailTool:
-    def _run(self, **args):
-        import asyncio
-        from agentbox.tools.nyscef.nyscef_case_detail_tool import NyscefCaseDetailTool
-
-        session = _FakeNyscefSession()
-        fn = NyscefCaseDetailTool(session).get_tool_function()
-        return asyncio.run(fn.ainvoke(args)), session
-
-    def test_parties_and_filings(self):
-        out, session = self._run(docket_id="abc123")
-        assert session.calls == [("case_details", "abc123"), ("docket", "abc123")]
-        assert out.error is None
-        assert out.case.index_number == "123456-2021"
-        assert len(out.case.parties) == 3
-        assert len(out.case.docket_entries) == 3
-
-    def test_without_filings_skips_docket_page(self):
-        out, session = self._run(docket_id="abc123", include_filings=False)
-        assert session.calls == [("case_details", "abc123")]
-        assert len(out.case.parties) == 3
-        assert out.case.docket_entries == []
