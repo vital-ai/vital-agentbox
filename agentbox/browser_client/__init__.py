@@ -173,8 +173,12 @@ class Browser:
     # --- Captcha ---
 
     async def solve_captcha(self) -> dict:
-        """Attempt to solve a captcha on the current page."""
-        return await self._cmd({"action": "solve_captcha"})
+        """Attempt to solve a captcha on the current page.
+
+        Returns the solver result: ``{"solved": bool, "method": str, "message": str}``.
+        """
+        result = await self._cmd({"action": "solve_captcha"})
+        return result.get("data") or {}
 
     # --- Lifecycle ---
 
@@ -305,8 +309,12 @@ class _NativeBackend:
             self._connections[session_id] = ws
 
         await ws.send(json.dumps(command))
-        raw = await asyncio.wait_for(ws.recv(), timeout=30)
-        return json.loads(raw)
+        # Skip status="info" progress frames (solve_captcha streams them).
+        while True:
+            raw = await asyncio.wait_for(ws.recv(), timeout=180)
+            result = json.loads(raw)
+            if result.get("status") != "info":
+                return result
 
     async def delete_session(self, session_id: str):
         # Close WS if open

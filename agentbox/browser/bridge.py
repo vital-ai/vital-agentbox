@@ -22,6 +22,25 @@ log = logging.getLogger(__name__)
 
 ORCHESTRATOR_URL = os.environ.get("AGENTBOX_ORCHESTRATOR_URL", "http://localhost:8090")
 
+# Must cover the slowest browser action: navigate defaults to 60s on the worker,
+# and solve_captcha runs Cloudflare polling plus the hCaptcha solver.
+COMMAND_TIMEOUT = float(os.environ.get("AGENTBOX_BROWSER_COMMAND_TIMEOUT", "180"))
+
+
+def _auth_headers() -> dict:
+    """Mint a short-lived service JWT for bridge→orchestrator calls.
+
+    The orchestrator's JWT middleware covers /internal/browsers too, so the
+    bridge must authenticate like every other internal hop. The secret stays
+    in the worker process; sandbox code never sees it.
+    """
+    secret = os.environ.get("AGENTBOX_SERVICE_SECRET")
+    if not secret:
+        return {}
+    from agentbox.api.auth import mint_service_token
+    token = mint_service_token(secret, subject="browser-bridge", ttl=60)
+    return {"Authorization": f"Bearer {token}"}
+
 
 async def browser_message_handler(message: dict) -> dict:
     """Handle sendMessage calls from Pyodide for browser operations.
@@ -49,13 +68,14 @@ async def _handle_http(message: dict) -> dict:
     log.info("Browser bridge HTTP: %s %s", method, url)
 
     try:
+        headers = _auth_headers()
         async with httpx.AsyncClient(timeout=30.0) as client:
             if method == "POST":
-                resp = await client.post(url, json=body)
+                resp = await client.post(url, json=body, headers=headers)
             elif method == "DELETE":
-                resp = await client.delete(url)
+                resp = await client.delete(url, headers=headers)
             else:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=headers)
 
         if resp.status_code >= 400:
             return {"status": "error", "code": resp.status_code, "detail": resp.text}
@@ -83,7 +103,7 @@ async def _handle_command(message: dict) -> dict:
     log.info("Browser bridge WS: %s → %s", command.get("action"), ws_url)
 
     try:
-        async with websockets.connect(ws_url) as ws:
+        async with websockets.connect(ws_url, additional_headers=_auth_headers() or None) as ws:
             # Consume the "connected" message
             connected = await asyncio.wait_for(ws.recv(), timeout=5)
             log.debug("WS connected: %s", connected)
@@ -91,9 +111,14 @@ async def _handle_command(message: dict) -> dict:
             # Send command
             await ws.send(json.dumps(command))
 
-            # Receive response
-            raw = await asyncio.wait_for(ws.recv(), timeout=30)
-            result = json.loads(raw)
+            # Long-running actions (solve_captcha) stream status="info" progress
+            # frames before the final ok/error response; skip them.
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=COMMAND_TIMEOUT)
+                result = json.loads(raw)
+                if result.get("status") != "info":
+                    break
+                log.info("Browser bridge progress [%s]: %s", command.get("action"), result.get("message"))
 
         return {"status": "ok", "data": result}
     except Exception as e:
