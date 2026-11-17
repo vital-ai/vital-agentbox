@@ -2,13 +2,12 @@
 NYSCEF Tools tests.
 
 Tests model instantiation, HTML parsers (search results, result count,
-case detail, empty HTML), and tool registration with ToolManager.
+case detail, empty HTML). The kgraphplanner tool wrappers are tested where
+they are used (cardiff-underwriter-agent, test_agent/test_nyscef_agentbox.py).
 
 Usage:
     python -m pytest test/test_nyscef_tools.py -xvs
 """
-
-import pytest
 
 from agentbox.tools.nyscef.html_parser import (
     parse_case_detail,
@@ -362,49 +361,3 @@ class TestParseCaseDetail:
         assert detail.index_number is None
         assert detail.parties == []
         assert detail.docket_entries == []
-
-
-# --- Tool Registration ---
-
-_has_kgraphplanner = True
-try:
-    import kgraphplanner  # noqa: F401
-except ImportError:
-    _has_kgraphplanner = False
-
-
-@pytest.mark.skipif(not _has_kgraphplanner, reason="kgraphplanner not installed")
-class TestNyscefToolRegistration:
-    def test_tools_register(self):
-        from kgraphplanner.tool_manager.tool_manager import ToolManager
-        from agentbox.tools.nyscef.nyscef_case_detail_tool import NyscefCaseDetailTool
-        from agentbox.tools.nyscef.nyscef_case_search_tool import NyscefCaseSearchTool
-        from agentbox.tools.nyscef.session_manager import NyscefSessionManager
-
-        tm = ToolManager()
-        session = NyscefSessionManager()
-
-        NyscefCaseSearchTool(session, tool_manager=tm)
-        NyscefCaseDetailTool(session, tool_manager=tm)
-
-        available = tm.list_available_tools()
-        expected = ["nyscef_case_search_tool", "nyscef_case_detail_tool"]
-        for name in expected:
-            assert name in available, f"{name} not registered"
-
-    def test_tool_functions_retrievable(self):
-        from kgraphplanner.tool_manager.tool_manager import ToolManager
-        from agentbox.tools.nyscef.nyscef_case_detail_tool import NyscefCaseDetailTool
-        from agentbox.tools.nyscef.nyscef_case_search_tool import NyscefCaseSearchTool
-        from agentbox.tools.nyscef.session_manager import NyscefSessionManager
-
-        tm = ToolManager()
-        session = NyscefSessionManager()
-
-        NyscefCaseSearchTool(session, tool_manager=tm)
-        NyscefCaseDetailTool(session, tool_manager=tm)
-
-        expected = ["nyscef_case_search_tool", "nyscef_case_detail_tool"]
-        for name in expected:
-            fn = tm.get_tool_function(name)
-            assert fn is not None, f"No function for {name}"
