@@ -9,6 +9,8 @@ Usage:
     python -m pytest test/test_nyscef_tools.py -xvs
 """
 
+import pytest
+
 from agentbox.tools.nyscef.html_parser import (
     parse_case_detail,
     parse_result_count,
@@ -29,7 +31,8 @@ from agentbox.tools.nyscef.models import (
 # --- Test HTML fixtures ---
 
 SEARCH_RESULTS_HTML = """
-<html><body>
+<html><head><title>Case Search Results</title></head><body>
+<h1>Case Search Results</h1>
 <table class="NewSearchResults">
   <tr>
     <th>Index No. / Filing Date</th><th>eFiling Status</th><th>Caption</th><th>Court</th>
@@ -361,3 +364,143 @@ class TestParseCaseDetail:
         assert detail.index_number is None
         assert detail.parties == []
         assert detail.docket_entries == []
+
+
+# --- Search pages: what a search landed on (shapes of live NYSCEF pages, 2026-11; names invented) ---
+
+def _results_page(rows=0, pages=1):
+    body = ""
+    if rows:
+        trs = "".join(
+            f'<tr><td><a href="DocumentList?docketId=d{i}&amp;display=all">{100000 + i}/2024</a><br>01/15/2024</td>'
+            f'<td>Filed<br><span class="grayItalic">Active</span></td><td>ACME v. WIDGET {i}</td>'
+            f'<td>Kings County<br><span class="grayItalic">Commercial</span></td></tr>' for i in range(rows))
+        body = f'<table class="NewSearchResults"><tr><th>Index</th><th>Status</th><th>Caption</th><th>Court</th></tr>{trs}</table>'
+        if pages > 1:
+            body += '<a class="pageOn" href="CaseSearchResults?PageNum=1">1</a>' + "".join(
+                f'<a class="pageOff" href="CaseSearchResults?PageNum={p}">{p}</a>' for p in range(2, pages + 1)) + \
+                f'<a class="pageOff" href="CaseSearchResults?PageNum={pages}">Last</a>'
+    return ("<html><head><title>Case Search Results</title></head><body><main><h1>Case Search Results</h1>"
+            "<span>Business/Organization Name: WIDGET WORKS</span> | <a>New Search</a>" + body + "</main></body></html>")
+
+
+CAPTCHA_PAGE = ('<html><head><title>Captcha</title></head><body><p>To continue, please check the box below:</p>'
+                '<iframe src="https://newassets.hcaptcha.com/captcha/v1/x"></iframe></body></html>')
+FORM_ERROR_PAGE = ('<html><head><title>Case Search</title></head><body><span class="error">Enter either a business '
+                   "name or a person's name when searching by party.</span>"
+                   '<iframe src="https://newassets.hcaptcha.com/captcha/v1/x"></iframe></body></html>')
+
+
+class TestSearchPages:
+    def test_classify(self):
+        from agentbox.tools.nyscef.html_parser import classify_search_page
+        assert classify_search_page(_results_page(3)) == "results"
+        assert classify_search_page(_results_page(0)) == "results"
+        assert classify_search_page(CAPTCHA_PAGE) == "challenge"
+        assert classify_search_page(FORM_ERROR_PAGE) == "form_error"      # its hCaptcha iframe isn't a challenge
+        assert classify_search_page("<html><title>Maintenance</title></html>") == "unknown"
+
+    def test_zero_is_zero_and_failure_is_none(self):
+        assert parse_result_count(_results_page(0)) == 0
+        assert parse_result_count(_results_page(3)) == 3
+        assert parse_result_count(_results_page(25, pages=2)) == 50          # an upper-bound estimate
+        assert parse_result_count(CAPTCHA_PAGE) is None
+        assert parse_result_count(FORM_ERROR_PAGE) is None
+
+    def test_pagination(self):
+        from agentbox.tools.nyscef.html_parser import parse_pagination
+        assert parse_pagination(_results_page(3)) == (1, 1)
+        assert parse_pagination(_results_page(25, pages=3)) == (1, 3)
+
+
+class _FakeBrowser:
+    """Records fills and navigations; serves one scripted page per navigation."""
+
+    session_id = "fake-session"
+
+    def __init__(self, pages):
+        self.pages, self.fills, self.gotos, self._closed = list(pages), [], [], False
+        self.current = "<html><title>Case Search</title></html>"
+
+    async def goto(self, url, **kw):
+        self.gotos.append(url)
+        if "CaseSearchResults" in url:
+            self.current = self.pages.pop(0)
+        else:
+            self.current = "<html><title>Case Search</title></html>"
+        return {}
+
+    async def title(self):
+        import re
+        m = re.search(r"<title>(.*?)</title>", self.current)
+        return m.group(1) if m else ""
+
+    async def fill(self, selector, value):
+        self.fills.append((selector, value))
+        return {}
+
+    async def click_and_wait_for_navigation(self, selector, **kw):
+        self.current = self.pages.pop(0)
+        return {}
+
+    async def content(self):
+        return self.current
+
+    async def solve_captcha(self):
+        return {"solved": False, "message": "test"}
+
+    async def close(self):
+        self._closed = True
+
+
+def _manager(monkeypatch, browsers, captured=None):
+    from agentbox.tools.nyscef import session_manager as sm
+    queue = list(browsers)
+
+    async def create(config=None, orchestrator_url=None, auth_token=None):
+        if captured is not None:
+            captured.append((orchestrator_url, auth_token))
+        return queue.pop(0)
+
+    monkeypatch.setattr(sm.Browser, "create", staticmethod(create))
+    async def no_sleep(*a, **k):
+        return None
+    monkeypatch.setattr(sm.asyncio, "sleep", no_sleep)
+    return sm.NyscefSessionManager(orchestrator_url="http://orch:8080", auth_token="tok")
+
+
+class TestSessionManagerSearch:
+    def test_every_field_written_and_url_token_passed(self, monkeypatch):
+        import asyncio
+        b = _FakeBrowser([_results_page(2)])
+        captured = []
+        mgr = _manager(monkeypatch, [b], captured)
+        pages = asyncio.run(mgr.search_pages(last_name="Public", first_name="John"))
+        assert len(pages) == 1 and parse_result_count(pages[0]) == 2
+        assert dict(b.fills) == {'input[name="txtBusinessOrgName"]': "", 'input[name="txtPartyLastName"]': "Public",
+                                 'input[name="txtPartyFirstName"]': "John", 'input[name="txtFilingDateFrom"]': "",
+                                 'input[name="txtFilingDateTo"]': ""}
+        assert captured == [("http://orch:8080", "tok")]
+
+    def test_challenge_or_form_error_never_reads_as_nothing(self, monkeypatch):
+        import asyncio
+        from agentbox.tools.nyscef.session_manager import NyscefSessionError
+        browsers = [_FakeBrowser([CAPTCHA_PAGE]), _FakeBrowser([FORM_ERROR_PAGE]), _FakeBrowser(["<html></html>"])]
+        mgr = _manager(monkeypatch, browsers)
+        with pytest.raises(NyscefSessionError):
+            asyncio.run(mgr.search_pages(business_name="Widget Works"))
+
+    def test_retry_after_a_bad_page_then_results(self, monkeypatch):
+        import asyncio
+        mgr = _manager(monkeypatch, [_FakeBrowser([FORM_ERROR_PAGE]), _FakeBrowser([_results_page(0)])])
+        pages = asyncio.run(mgr.search_pages(business_name="Widget Works"))
+        assert parse_result_count(pages[0]) == 0                             # a real "searched, nothing"
+
+    def test_pages_read_up_to_max(self, monkeypatch):
+        import asyncio
+        b = _FakeBrowser([_results_page(25, pages=3), _results_page(25, pages=3), _results_page(25, pages=3)])
+        mgr = _manager(monkeypatch, [b])
+        pages = asyncio.run(mgr.search_pages(last_name="Smith", max_pages=2))
+        assert len(pages) == 2 and b.gotos[-1].endswith("CaseSearchResults?PageNum=2")
+        b2 = _FakeBrowser([_results_page(25, pages=3)])
+        assert len(asyncio.run(_manager(monkeypatch, [b2]).search_pages(last_name="Smith"))) == 1

@@ -14,7 +14,7 @@ from kgraphplanner.tool_manager.tool_inf import AbstractTool
 from langchain_core.tools import tool
 from pydantic import BaseModel
 
-from agentbox.tools.nyscef.html_parser import parse_result_count, parse_search_results
+from agentbox.tools.nyscef.html_parser import parse_pagination, parse_result_count, parse_search_results
 from agentbox.tools.nyscef.models import (
     NyscefCaseSearchInput,
     NyscefCaseSearchOutput,
@@ -49,18 +49,20 @@ class NyscefCaseSearchTool(AbstractTool):
             index_number: str | None = None,
             start_date: str | None = None,
             end_date: str | None = None,
+            max_pages: int = 1,
         ) -> NyscefCaseSearchOutput:
             """Search NYSCEF for court cases by party name, business name, or index number."""
             try:
                 if index_number:
-                    html = await session.search_by_index(index_number)
+                    pages = [await session.search_by_index(index_number)]
                 elif business_name or last_name:
-                    html = await session.search_by_name(
+                    pages = await session.search_pages(
                         business_name=business_name,
                         last_name=last_name,
                         first_name=first_name,
                         start_date=start_date,
                         end_date=end_date,
+                        max_pages=max_pages,
                     )
                 else:
                     return NyscefCaseSearchOutput(
@@ -68,13 +70,24 @@ class NyscefCaseSearchTool(AbstractTool):
                         error="At least one of business_name, last_name, or index_number is required",
                     )
 
-                cases = parse_search_results(html)
-                total_count = parse_result_count(html)
+                cases, seen = [], set()
+                for html in pages:
+                    for case in parse_search_results(html):
+                        key = case.docket_id or case.index_number
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        cases.append(case)
+                _, last_page = parse_pagination(pages[0])
+                truncated = last_page > len(pages)
+                total_count = parse_result_count(pages[0]) if truncated else len(cases)
 
                 return NyscefCaseSearchOutput(
                     tool="nyscef_case_search_tool",
                     cases=cases,
                     total_count=total_count,
+                    pages_read=len(pages),
+                    truncated=truncated,
                 )
 
             except Exception as exc:

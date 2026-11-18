@@ -46,17 +46,22 @@ class Browser:
         self._closed = False
 
     @classmethod
-    async def create(cls, config: dict | None = None) -> "Browser":
+    async def create(cls, config: dict | None = None, orchestrator_url: str | None = None,
+                     auth_token: str | None = None) -> "Browser":
         """Create a new browser session and return a Browser handle.
 
         Args:
             config: Optional session config dict passed to the browser-worker.
                     Keys like ``browser_type``, ``headless``, ``proxy``, etc.
+            orchestrator_url, auth_token: native runtime only: the orchestrator and the bearer token for this session.
+                    Default to ``AGENTBOX_ORCHESTRATOR_URL`` / ``AGENTBOX_AUTH_TOKEN``. Pass them explicitly when one
+                    process serves many requests (a token per request; no shared environment to race on). Ignored
+                    in Pyodide, where the host's bridge authenticates.
         """
         if _RUNTIME == "pyodide":
             backend = _PyodideBackend()
         else:
-            backend = await _NativeBackend.connect()
+            backend = await _NativeBackend.connect(orchestrator_url, auth_token=auth_token)
 
         session_id = await backend.create_session(config=config)
         return cls(session_id, _backend=backend)
@@ -270,13 +275,13 @@ class _NativeBackend:
         self._connections: dict = {}  # session_id → ws
 
     @classmethod
-    async def connect(cls, orchestrator_url: str = None) -> "_NativeBackend":
+    async def connect(cls, orchestrator_url: str = None, auth_token: str = None) -> "_NativeBackend":
         import os
         url = orchestrator_url or os.environ.get(
             "AGENTBOX_ORCHESTRATOR_URL", "http://localhost:8090"
         )
-        token = os.environ.get("AGENTBOX_AUTH_TOKEN")
-        return cls(url, auth_token=token)
+        token = auth_token or os.environ.get("AGENTBOX_AUTH_TOKEN")
+        return cls(url.rstrip("/"), auth_token=token)
 
     def _auth_headers(self) -> dict:
         if self._auth_token:

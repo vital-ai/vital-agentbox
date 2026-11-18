@@ -75,36 +75,69 @@ def parse_search_results(html: str) -> list[NyscefCaseSummary]:
     return cases
 
 
-def parse_result_count(html: str) -> int | None:
-    """Estimate result count from the search results page.
+# What a search left the browser on (checked live, 2026-11): NYSCEF's results page has the heading "Case Search
+# Results" and a ``table.NewSearchResults`` when anything matched; with nothing matched it is the same page with the
+# search criteria and no table (no "no matches" message). A challenge is titled "Captcha" ("To continue, please check
+# the box below"). A rejected search stays on the "Case Search" form with an error.
+SEARCH_RESULTS = "results"
+SEARCH_CHALLENGE = "challenge"
+SEARCH_FORM_ERROR = "form_error"
+SEARCH_UNKNOWN = "unknown"
 
-    NYSCEF does not display an explicit total.  This function counts the
-    rows on the current page and multiplies by the number of pages (from
-    the pagination "Last" link) to produce an upper-bound estimate.
-    Returns the count of rows on the current page if there is no pagination.
+
+def classify_search_page(html: str) -> str:
+    """Which page a search returned: results (including none), a challenge, the form with an error, or unknown.
+
+    Only ``SEARCH_RESULTS`` may be read as an answer; every other outcome is a failed search, never "nothing found".
     """
     from bs4 import BeautifulSoup
 
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html or "", "html.parser")
+    title = (soup.title.get_text(" ", strip=True) if soup.title else "").lower()
+    heading = " ".join(h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2"])).lower()
+    text = soup.get_text(" ", strip=True).lower()
+    # Not the hCaptcha iframe: the search form carries an invisible one, so it would misread a rejected form.
+    if "captcha" in title or "just a moment" in title or "check the box below" in text:
+        return SEARCH_CHALLENGE
+    if "case search results" in title or "case search results" in heading:
+        return SEARCH_RESULTS
+    if "case search" in title and ("enter either" in text or soup.find(class_=re.compile(r"(?i)error|warning"))):
+        return SEARCH_FORM_ERROR
+    return SEARCH_UNKNOWN
 
-    # Count rows in the results table
+
+def parse_pagination(html: str) -> tuple[int, int]:
+    """``(current_page, last_page)`` of a results page; ``(1, 1)`` without pagination (25 rows a page)."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    pages = [int(m.group(1)) for a in soup.find_all("a", href=True)
+             if "DocumentList" not in a["href"] and (m := re.search(r"CaseSearchResults\?PageNum=(\d+)", a["href"]))]
+    current = soup.find("a", class_="pageOn", href=re.compile(r"PageNum=\d+"))
+    cur = int(re.search(r"PageNum=(\d+)", current["href"]).group(1)) if current else 1
+    return cur, max(pages + [cur, 1])
+
+
+def parse_result_count(html: str) -> int | None:
+    """Estimate the result count from a search results page.
+
+    NYSCEF does not display a total: this is the rows on the current page times the number of pages (from the
+    pagination "Last" link), an upper bound. A results page with no table is a real ``0`` ("searched, nothing").
+    ``None`` means the page isn't a results page (a challenge, the form, anything else): the search failed.
+    """
+    from bs4 import BeautifulSoup
+
+    if classify_search_page(html) != SEARCH_RESULTS:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table", class_="NewSearchResults")
     if not table:
-        return None
+        return 0
     rows = [r for r in table.find_all("tr") if len(r.find_all("td")) >= 4]
-    page_count = len(rows)
-    if page_count == 0:
-        return None
-
-    # Find the "Last" pagination link to get total pages
-    last_link = soup.find("a", class_="pageOff", string="Last")
-    if last_link and last_link.get("href"):
-        match = re.search(r"PageNum=(\d+)", last_link["href"])
-        if match:
-            total_pages = int(match.group(1))
-            return page_count * total_pages
-
-    return page_count
+    if not rows:
+        return 0
+    _, last = parse_pagination(html)
+    return len(rows) * last
 
 
 def parse_case_detail(

@@ -66,6 +66,9 @@ class NyscefCaseSearchInput(BaseModel):
     index_number: str | None = Field(default=None, description="Case index number (e.g. '100234/2024')")
     start_date: str | None = Field(default=None, description="Filing date range start (MM/DD/YYYY)")
     end_date: str | None = Field(default=None, description="Filing date range end (MM/DD/YYYY)")
+    max_pages: int = Field(default=1, ge=1, le=10,
+                           description="Results pages to read for a name search (25 cases a page); narrow a "
+                                       "common name with the filing dates rather than reading many pages")
 
     model_config = {
         "json_schema_extra": {
@@ -78,8 +81,11 @@ class NyscefCaseSearchOutput(BaseModel):
     """Output model for NYSCEF case search tool"""
     tool: Literal["nyscef_case_search_tool"] = Field(..., description="Tool identifier")
     cases: list[NyscefCaseSummary] = Field(default_factory=list, description="Matching cases")
-    total_count: int | None = Field(default=None, description="Total number of matching cases")
-    error: str | None = Field(default=None, description="Error message if search failed")
+    total_count: int | None = Field(default=None, description="Matching cases: exact when every page was read, else "
+                                                               "an upper-bound estimate; 0 = searched, nothing")
+    pages_read: int = Field(default=0, description="Results pages read")
+    truncated: bool = Field(default=False, description="More results pages exist than were read")
+    error: str | None = Field(default=None, description="Error message if search failed (never 'nothing found')")
 
     model_config = {
         "json_schema_extra": {
